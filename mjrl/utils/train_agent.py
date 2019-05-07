@@ -86,3 +86,5 @@ def train_agent(job_name, agent,
         agent.logger.save_log('logs/')
         make_train_plots(log=agent.logger.log, keys=plot_keys, save_loc='logs/')
     os.chdir(previous_dir)
+
+    return best_perf
