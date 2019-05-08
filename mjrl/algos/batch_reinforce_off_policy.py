@@ -33,7 +33,7 @@ class BatchREINFORCEOffPolicy:
         self.seed = seed
         self.save_logs = save_logs
         self.running_score = None
-        self.replay_buffer = []
+        self.replay_buffer = {}
         self.max_dataset_size = max_dataset_size
         if save_logs: self.logger = DataLog()
 
@@ -95,10 +95,7 @@ class BatchREINFORCEOffPolicy:
         eval_statistics = self.train_from_paths(paths)
         eval_statistics.append(N)
 
-        self.replay_buffer += paths
-        
-        if self.max_dataset_size > 0 and len(self.replay_buffer) > self.max_dataset_size:
-            self.replay_buffer = self.replay_buffer[-self.max_dataset_size:]
+        self.update_replay_buffer(paths)
 
         if self.save_logs:
             ts = timer.time()
@@ -106,12 +103,42 @@ class BatchREINFORCEOffPolicy:
             self.logger.log_kv('time_VF', timer.time()-ts)
             self.logger.log_kv('VF_error_before', error_before)
             self.logger.log_kv('VF_error_after', error_after)
+            self.logger.log_kv('dataset_size', len(self.replay_buffer['observations']))
+            self.logger.log_kv('t', self.replay_buffer['t'])
         else:
             self.baseline.fit_off_policy(self.replay_buffer, self.policy, gamma)
 
         return eval_statistics
 
-
+    def update_replay_buffer(self, paths):
+        observations = np.concatenate([path["observations"] for path in paths])
+        actions = np.concatenate([path["actions"] for path in paths])
+        rewards = np.concatenate([path["rewards"] for path in paths])
+        l = observations.shape[0] - 1
+        if 'observations' not in self.replay_buffer:
+            self.replay_buffer['observations'] = observations[:-1]
+            self.replay_buffer['observations_prime'] = observations[1:]
+            self.replay_buffer['actions'] = actions[:-1]
+            self.replay_buffer['rewards'] = rewards[:-1]
+            self.replay_buffer['last_update'] = np.zeros(l)
+            self.replay_buffer['t'] = 0
+        else:
+            self.replay_buffer['t'] += 1
+            self.replay_buffer['observations'] = np.concatenate([self.replay_buffer['observations'], observations[:-1]])
+            self.replay_buffer['observations_prime'] = np.concatenate([self.replay_buffer['observations_prime'], observations[1:]])
+            self.replay_buffer['actions'] = np.concatenate([self.replay_buffer['actions'], actions[:-1]])
+            self.replay_buffer['rewards'] = np.concatenate([self.replay_buffer['rewards'], rewards[:-1]])
+            self.replay_buffer['last_update'] = np.concatenate([self.replay_buffer['last_update'], np.ones(l) * self.replay_buffer['t']])
+        
+                
+        if self.max_dataset_size > 0 and len(self.replay_buffer['observations']) > self.max_dataset_size:
+            self.replay_buffer['observations'] = self.replay_buffer['observations'][-self.max_dataset_size:, :]
+            self.replay_buffer['observations_prime'] = self.replay_buffer['observations_prime'][-self.max_dataset_size:, :]
+            self.replay_buffer['actions'] = self.replay_buffer['actions'][-self.max_dataset_size:, :]
+            self.replay_buffer['rewards'] = self.replay_buffer['rewards'][-self.max_dataset_size:]
+            self.replay_buffer['last_update'] = self.replay_buffer['last_update'][-self.max_dataset_size:]
+            
+        
     # ----------------------------------------------------------
     def train_from_paths(self, paths):
 

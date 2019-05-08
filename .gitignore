@@ -105,3 +105,10 @@ ENV/
 
 # Mac OSX files
 *.DS_Store
+
+# experiment stuff
+*.pickle
+log.csv
+stoc_pol_mean.png
+results.txt
+MUJOCO_LOG.TXT

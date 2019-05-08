@@ -14,8 +14,8 @@ args = parser.parse_args()
 print(args)
 
 exp_dir = args.exp_dir
-# policy_dir = exp_dir + '/iterations/best_policy.pickle'
-policy_dir = exp_dir + '/iterations/policy_25.pickle'
+policy_dir = exp_dir + '/iterations/best_policy.pickle'
+# policy_dir = exp_dir + '/iterations/policy_50.pickle'
 
 policy = pickle.load(open(policy_dir, 'rb'))
 

@@ -19,17 +19,20 @@ np.random.seed(SEED)
 
 e = GymEnv('mjrl_point_mass-v0')
 
-num_iters = [1, 10, 100, 500, 1000]
+sizes = [2000 * 1, 2000 * 10, 2000 * 20, 2000 * 50]
 
+num_traj = 40
 
+times = []
 
-for ni in num_iters:
+for size in sizes:
     policy = MLP(e.spec)
-    baseline = MLPBaseline(e.spec, num_iters=ni) # TODO: find best (function?) num_iters
-    agent = NPGOffPolicy(e, policy, baseline, max_dataset_size=45*10 ,const_learn_rate=0.1, seed=SEED, save_logs=True)
+    baseline = MLPBaseline(e.spec, num_iters=10) # TODO: find best (function?) num_iters
+    agent = NPGOffPolicy(e, policy, baseline, max_dataset_size=2000*10 ,const_learn_rate=0.1, seed=SEED, save_logs=True)
+    # agent = NPGOffPolicy(e, policy, baseline, max_dataset_size=num_traj*200 ,const_learn_rate=0.1, seed=SEED, save_logs=True)
 
     ts = timer.time()
-    train_agent(job_name='exp_' + host + '_point_mass_num_iters_' + str(ni),
+    train_agent(job_name='exp_3_' + host + '_point_mass_size_' + str(size),
                 agent=agent,
                 seed=SEED,
                 niter=1000,
@@ -37,7 +40,10 @@ for ni in num_iters:
                 gae_lambda=0.97,
                 num_cpu=multiprocessing.cpu_count() // 2,
                 sample_mode='trajectories',
-                num_traj=40,      # samples = 40*25 = 1000
-                save_freq=25,
+                num_traj=num_traj,      # samples = 40*25 = 1000
+                save_freq=250,
                 evaluation_rollouts=10)
+    times.append((timer.time()-ts))
     print("time taken = %f" % (timer.time()-ts))
+
+print(times)

@@ -112,82 +112,162 @@ class MLPBaseline:
             return error_before, error_after
 
     def fit_off_policy(self, replay_buffer, policy, gamma, return_errors=False):
-        # TODO: make this in baseline, so we don't rewrite the code
-        # TODO: use fit() in fit_off_policy?
-        states = []
-        actions = []
-        state_primes = []
-        action_primes = []
-        rewards = []
-        
-        # TODO optimize
-        for path in replay_buffer:
-            l = len(path["observations"])
-            for i, (s, a, r) in enumerate(zip(path["observations"], path["actions"], path["rewards"])):
-                if i == l - 1:
-                    break
-                sp = path["observations"][i+1]
-                states.append(s)
-                actions.append(a)
-                state_primes.append(sp)
-                ap, _ = policy.get_action(sp)
-                action_primes.append(ap)
-                rewards.append(r)
-        rewards = np.array(rewards)
-        
-        faux_path = {
-            'observations': np.stack(states),
-            'actions': np.stack(actions)
-        }
-        faux_path_prime = {
-            'observations': np.stack(state_primes),
-            'actions': np.stack(action_primes)
-        }
+        n = replay_buffer['observations'].shape[0]
+        # only update actions if they are in the batch
 
-        Qs = self.predict(faux_path_prime)
+        errors_before = []
+        errors_after = []
+        batches_x = []
+        batches_y = []
 
-        targets = rewards + gamma*Qs
-        featmat = np.array(self._features(faux_path))
+        # pick all batches before-hand so we can compute pre and post errors
+        for _ in range(self.num_iters):
+            rand_idx = np.random.permutation(n)[:self.batch_size]
 
-        featmat = featmat.astype('float32')
-        returns = targets.astype('float32')
-        num_samples = returns.shape[0]
+            replay_buffer['last_update'][rand_idx] = replay_buffer['t']
 
-        # Make variables with the above data
-        if self.use_gpu:
-            featmat_var = Variable(torch.from_numpy(featmat).cuda(), requires_grad=False)
-            returns_var = Variable(torch.from_numpy(returns).cuda(), requires_grad=False)
-        else:
-            featmat_var = Variable(torch.from_numpy(featmat), requires_grad=False)
-            returns_var = Variable(torch.from_numpy(returns), requires_grad=False)
+            observations_prime = replay_buffer['observations_prime'][rand_idx]
+            actions_prime = np.stack([policy.get_action(obs)[0] for obs in observations_prime])
+            
+            path = {
+                'observations': replay_buffer['observations'][rand_idx],
+                'actions': replay_buffer['actions'][rand_idx]
+            }
 
-        if return_errors:
+            path_prime = {
+                'observations': observations_prime,
+                'actions': actions_prime
+            }
+
+            Qs = self.predict(path_prime)
+            targets = replay_buffer['rewards'][rand_idx] + gamma*Qs
+            featmat = np.array(self._features(path))
+
+            featmat = featmat.astype('float32')
+            returns = targets.astype('float32')
+
             if self.use_gpu:
-                predictions = self.model(featmat_var).cpu().data.numpy().ravel()
+                featmat_var = Variable(torch.from_numpy(featmat).cuda(), requires_grad=False)
+                returns_var = Variable(torch.from_numpy(returns).cuda(), requires_grad=False)
             else:
-                predictions = self.model(featmat_var).data.numpy().ravel()
-            errors = returns.ravel() - predictions
-            error_before = np.sum(errors**2)/(np.sum(returns**2) + 1e-8)
+                featmat_var = Variable(torch.from_numpy(featmat), requires_grad=False)
+                returns_var = Variable(torch.from_numpy(returns), requires_grad=False)
 
-        for i in range(self.num_iters):
-            rand_idx = np.random.permutation(num_samples)[:self.batch_size]
+            if return_errors:
+                if self.use_gpu:
+                    predictions = self.model(featmat_var).cpu().data.numpy().ravel()
+                else:
+                    predictions = self.model(featmat_var).data.numpy().ravel()
+                errors = returns.ravel() - predictions
+                errors_before.append(errors)
 
-            batch_x = featmat_var[torch.from_numpy(rand_idx)]
-            batch_y = returns_var[torch.from_numpy(rand_idx)]
+            batches_x.append(featmat_var)
+            batches_y.append(returns_var)
+        
+        for batch_x, batch_y in zip(batches_x, batches_y):
             self.optimizer.zero_grad()
             yhat = self.model(batch_x)
             loss = self.loss_function(yhat, batch_y)
             loss.backward()
             self.optimizer.step()
 
+            if return_errors:
+                if self.use_gpu:
+                    predictions = self.model(batch_x).cpu().data.numpy().ravel()
+                else:
+                    predictions = self.model(batch_x).data.numpy().ravel()
+                errors = batch_y.cpu().data.numpy().ravel() - predictions
+                errors_after.append(errors)
+                
+        
         if return_errors:
-            if self.use_gpu:
-                predictions = self.model(featmat_var).cpu().data.numpy().ravel()
-            else:
-                predictions = self.model(featmat_var).data.numpy().ravel()
-            errors = returns.ravel() - predictions
-            error_after = np.sum(errors**2)/(np.sum(returns**2) + 1e-8)
+            before = np.concatenate(errors_before)
+            after = np.concatenate(errors_after)
+            returns = np .concatenate(batches_y)
+            error_before = np.sum(before**2) / (np.sum(returns**2) + 1e-8)
+            error_after = np.sum(after**2) / (np.sum(returns**2) + 1e-8)
             return error_before, error_after
+
+
+
+    # def fit_off_policy(self, replay_buffer, policy, gamma, return_errors=False):
+        
+    #     # TODO: make this in baseline, so we don't rewrite the code
+    #     # TODO: use fit() in fit_off_policy?
+    #     states = []
+    #     actions = []
+    #     state_primes = []
+    #     action_primes = []
+    #     rewards = []
+        
+    #     # TODO optimize
+    #     for path in replay_buffer:
+    #         l = len(path["observations"])
+    #         for i, (s, a, r) in enumerate(zip(path["observations"], path["actions"], path["rewards"])):
+    #             if i == l - 1:
+    #                 break
+    #             sp = path["observations"][i+1]
+    #             states.append(s)
+    #             actions.append(a)
+    #             state_primes.append(sp)
+    #             ap, _ = policy.get_action(sp)
+    #             action_primes.append(ap)
+    #             rewards.append(r)
+    #     rewards = np.array(rewards)
+        
+    #     faux_path = {
+    #         'observations': np.stack(states),
+    #         'actions': np.stack(actions)
+    #     }
+    #     faux_path_prime = {
+    #         'observations': np.stack(state_primes),
+    #         'actions': np.stack(action_primes)
+    #     }
+
+    #     Qs = self.predict(faux_path_prime)
+
+    #     targets = rewards + gamma*Qs
+    #     featmat = np.array(self._features(faux_path))
+
+    #     featmat = featmat.astype('float32')
+    #     returns = targets.astype('float32')
+    #     num_samples = returns.shape[0]
+
+    #     # Make variables with the above data
+    #     if self.use_gpu:
+    #         featmat_var = Variable(torch.from_numpy(featmat).cuda(), requires_grad=False)
+    #         returns_var = Variable(torch.from_numpy(returns).cuda(), requires_grad=False)
+    #     else:
+    #         featmat_var = Variable(torch.from_numpy(featmat), requires_grad=False)
+    #         returns_var = Variable(torch.from_numpy(returns), requires_grad=False)
+
+    #     if return_errors:
+    #         if self.use_gpu:
+    #             predictions = self.model(featmat_var).cpu().data.numpy().ravel()
+    #         else:
+    #             predictions = self.model(featmat_var).data.numpy().ravel()
+    #         errors = returns.ravel() - predictions
+    #         error_before = np.sum(errors**2)/(np.sum(returns**2) + 1e-8)
+
+    #     for i in range(self.num_iters):
+    #         rand_idx = np.random.permutation(num_samples)[:self.batch_size]
+
+    #         batch_x = featmat_var[torch.from_numpy(rand_idx)]
+    #         batch_y = returns_var[torch.from_numpy(rand_idx)]
+    #         self.optimizer.zero_grad()
+    #         yhat = self.model(batch_x)
+    #         loss = self.loss_function(yhat, batch_y)
+    #         loss.backward()
+    #         self.optimizer.step()
+
+    #     if return_errors:
+    #         if self.use_gpu:
+    #             predictions = self.model(featmat_var).cpu().data.numpy().ravel()
+    #         else:
+    #             predictions = self.model(featmat_var).data.numpy().ravel()
+    #         errors = returns.ravel() - predictions
+    #         error_after = np.sum(errors**2)/(np.sum(returns**2) + 1e-8)
+    #         return error_before, error_after
 
 
 
