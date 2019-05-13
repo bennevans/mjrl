@@ -24,7 +24,9 @@ class BatchREINFORCEOffPolicy:
                 max_dataset_size=-1,
                 learn_rate=0.01,
                 seed=None,
-                save_logs=False):
+                save_logs=False,
+                fit_off_policy=True,
+                fit_on_policy=False):
 
         self.env = env
         self.policy = policy
@@ -35,6 +37,8 @@ class BatchREINFORCEOffPolicy:
         self.running_score = None
         self.replay_buffer = {}
         self.max_dataset_size = max_dataset_size
+        self.fit_off_policy = fit_off_policy
+        self.fit_on_policy = fit_on_policy
         if save_logs: self.logger = DataLog()
 
     def CPI_surrogate(self, observations, actions, advantages):
@@ -99,14 +103,21 @@ class BatchREINFORCEOffPolicy:
 
         if self.save_logs:
             ts = timer.time()
-            error_before, error_after = self.baseline.fit_off_policy(self.replay_buffer, self.policy, gamma, return_errors=True)
+            # TODO combine error after? throwing away rn
+            if self.fit_on_policy:
+                self.baseline.fit(paths)
+            if self.fit_off_policy:
+                error_before, error_after = self.baseline.fit_off_policy(self.replay_buffer, self.policy, gamma, return_errors=True)
             self.logger.log_kv('time_VF', timer.time()-ts)
             self.logger.log_kv('VF_error_before', error_before)
             self.logger.log_kv('VF_error_after', error_after)
             self.logger.log_kv('dataset_size', len(self.replay_buffer['observations']))
             self.logger.log_kv('t', self.replay_buffer['t'])
         else:
-            self.baseline.fit_off_policy(self.replay_buffer, self.policy, gamma)
+            if self.fit_on_policy:
+                self.baseline.fit(paths)
+            if self.fit_off_policy:
+                self.baseline.fit_off_policy(self.replay_buffer, self.policy, gamma)
 
         return eval_statistics
 

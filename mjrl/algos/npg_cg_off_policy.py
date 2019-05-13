@@ -30,7 +30,9 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
                  seed=None,
                  save_logs=False,
                  kl_dist=None,
-                 max_dataset_size=-1):
+                 max_dataset_size=-1,
+                 fit_off_policy=True,
+                 fit_on_policy=False):
         """
         All inputs are expected in mjrl's format unless specified
         :param normalized_step_size: Normalized step size (under the KL metric). Twice the desired KL distance
@@ -40,7 +42,8 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
         :param hvp_sample_frac: fraction of samples (>0 and <=1) to use for the Fisher metric (start with 1 and reduce if code too slow)
         :param seed: random seed
         """
-        super().__init__(env, policy, baseline, max_dataset_size=max_dataset_size)
+        super().__init__(env, policy, baseline, max_dataset_size=max_dataset_size,
+            fit_off_policy=fit_off_policy, fit_on_policy=fit_on_policy)
         self.env = env
         self.policy = policy
         self.baseline = baseline

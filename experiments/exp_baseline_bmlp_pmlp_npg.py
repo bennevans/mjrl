@@ -1,8 +1,7 @@
 from mjrl.utils.gym_env import GymEnv
 from mjrl.policies.gaussian_mlp import MLP
 
-from mjrl.q_baselines.mlp_baseline import MLPBaseline
-from mjrl.algos.npg_cg_off_policy import NPGOffPolicy
+from mjrl.baselines.mlp_baseline import MLPBaseline
 from mjrl.algos.npg_cg import NPG
 from mjrl.utils.train_agent import train_agent
 import mjrl.envs
@@ -36,12 +35,12 @@ times = []
 # for size in sizes:
 for num_traj in num_trajs:
     policy = MLP(e.spec)
-    baseline = MLPBaseline(e.spec, num_iters=ni) # TODO: find best (function?) num_iters
-    agent = NPGOffPolicy(e, policy, baseline, max_dataset_size=size ,const_learn_rate=0.1, seed=SEED, save_logs=True)
+    baseline = MLPBaseline(e.spec) # TODO: find best (function?) num_iters
+    agent = NPG(e, policy, baseline, const_learn_rate=0.1, seed=SEED, save_logs=True)
     # agent = NPGOffPolicy(e, policy, baseline, max_dataset_size=num_traj*200 ,const_learn_rate=0.1, seed=SEED, save_logs=True)
 
     ts = timer.time()
-    train_agent(job_name='exp_6_' + host + '_swimmer_num_traj_' + str(num_traj),
+    train_agent(job_name='exp_6_baseline_' + host + '_swimmer_num_traj_' + str(num_traj),
                 agent=agent,
                 seed=SEED,
                 niter=train_iter,
