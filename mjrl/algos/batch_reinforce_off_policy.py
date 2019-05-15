@@ -26,7 +26,9 @@ class BatchREINFORCEOffPolicy:
                 seed=None,
                 save_logs=False,
                 fit_off_policy=True,
-                fit_on_policy=False):
+                fit_on_policy=False,
+                update_epochs=1,
+                batch_size=64):
 
         self.env = env
         self.policy = policy
@@ -39,6 +41,8 @@ class BatchREINFORCEOffPolicy:
         self.max_dataset_size = max_dataset_size
         self.fit_off_policy = fit_off_policy
         self.fit_on_policy = fit_on_policy
+        self.update_epochs = update_epochs
+        self.batch_size = batch_size
         if save_logs: self.logger = DataLog()
 
     def CPI_surrogate(self, observations, actions, advantages):
@@ -96,10 +100,15 @@ class BatchREINFORCEOffPolicy:
         # compute advantages
         process_samples.compute_advantages(paths, self.baseline, gamma, gae_lambda)
         # train from paths
-        eval_statistics = self.train_from_paths(paths)
+        # eval_statistics = self.train_from_paths(paths)
+        # eval_statistics.append(N)
+
+        # train from replay buffer
+        self.update_replay_buffer(paths)
+
+        eval_statistics = self.train_from_replay_buffer(paths)
         eval_statistics.append(N)
 
-        self.update_replay_buffer(paths)
 
         if self.save_logs:
             ts = timer.time()
@@ -149,38 +158,17 @@ class BatchREINFORCEOffPolicy:
             self.replay_buffer['rewards'] = self.replay_buffer['rewards'][-self.max_dataset_size:]
             self.replay_buffer['last_update'] = self.replay_buffer['last_update'][-self.max_dataset_size:]
             
-        
-    # ----------------------------------------------------------
-    def train_from_paths(self, paths):
-
-        # Concatenate from all the trajectories
-        observations = np.concatenate([path["observations"] for path in paths])
-        actions = np.concatenate([path["actions"] for path in paths])
-        advantages = np.concatenate([path["advantages"] for path in paths])
-        # Advantage whitening
-        advantages = (advantages - np.mean(advantages)) / (np.std(advantages) + 1e-6)
-
-        # cache return distributions for the paths
-        path_returns = [sum(p["rewards"]) for p in paths]
-        mean_return = np.mean(path_returns)
-        std_return = np.std(path_returns)
-        min_return = np.amin(path_returns)
-        max_return = np.amax(path_returns)
-        base_stats = [mean_return, std_return, min_return, max_return]
-        self.running_score = mean_return if self.running_score is None else \
-                             0.9*self.running_score + 0.1*mean_return  # approx avg of last 10 iters
-        if self.save_logs: self.log_rollout_statistics(paths)
-
-        # Keep track of times for various computations
+    # TODO will calling this multiple times screw things up?
+    def update_policy(self, observations, actions, weights, paths):
         t_gLL = 0.0
 
         # Optimization algorithm
         # --------------------------
-        surr_before = self.CPI_surrogate(observations, actions, advantages).data.numpy().ravel()[0]
+        surr_before = self.CPI_surrogate(observations, actions, weights).data.numpy().ravel()[0]
 
         # VPG
         ts = timer.time()
-        vpg_grad = self.flat_vpg(observations, actions, advantages)
+        vpg_grad = self.flat_vpg(observations, actions, weights)
         t_gLL += timer.time() - ts
 
         # Policy update
@@ -188,7 +176,7 @@ class BatchREINFORCEOffPolicy:
         curr_params = self.policy.get_param_values()
         new_params = curr_params + self.alpha * vpg_grad
         self.policy.set_param_values(new_params, set_new=True, set_old=False)
-        surr_after = self.CPI_surrogate(observations, actions, advantages).data.numpy().ravel()[0]
+        surr_after = self.CPI_surrogate(observations, actions, weights).data.numpy().ravel()[0]
         kl_dist = self.kl_old_new(observations, actions).data.numpy().ravel()[0]
         self.policy.set_param_values(new_params, set_new=True, set_old=True)
 
@@ -208,6 +196,54 @@ class BatchREINFORCEOffPolicy:
                     self.logger.log_kv('success_rate', success_rate)
                 except:
                     pass
+
+    def train_from_replay_buffer(self, paths):
+        # TODO cache baseline and only update when necessary?
+        observations = self.replay_buffer['observations']
+        actions = []
+        for observation in observations:
+            action, info = self.policy.get_action(observation)
+            actions.append(action)
+        actions = np.stack(actions) # TODO concatenate?
+        predictions = self.baseline.predict({'observations': observations, 'actions': actions})
+
+        # TODO multiple iterations / batches?
+        # for epoch in range(self.update_epochs):
+        self.update_policy(observations, actions, predictions, paths)
+            
+
+        path_returns = [sum(p["rewards"]) for p in paths]
+        mean_return = np.mean(path_returns)
+        std_return = np.std(path_returns)
+        min_return = np.amin(path_returns)
+        max_return = np.amax(path_returns)
+        base_stats = [mean_return, std_return, min_return, max_return]
+
+        return base_stats
+
+
+    # ----------------------------------------------------------
+    def train_from_paths(self, paths):
+
+        # Concatenate from all the trajectories
+        observations = np.concatenate([path["observations"] for path in paths])
+        actions = np.concatenate([path["actions"] for path in paths])
+        advantages = np.concatenate([path["advantages"] for path in paths])
+        # Advantage whitening
+        advantages = (advantages - np.mean(advantages)) / (np.std(advantages) + 1e-6)
+
+        # cache return distributions for the paths
+        path_returns = [sum(p["rewards"]) for p in paths]
+        mean_return = np.mean(path_returns)
+        std_return = np.std(path_returns)
+        min_return = np.amin(path_returns)
+        max_return = np.amax(path_returns)
+        base_stats = [mean_return, std_return, min_return, max_return]
+        self.running_score = mean_return if self.running_score is None else \
+                            0.9*self.running_score + 0.1*mean_return  # approx avg of last 10 iters
+        if self.save_logs: self.log_rollout_statistics(paths)
+
+        self.update_policy(observations, actions, advantages, paths)
 
         return base_stats
 

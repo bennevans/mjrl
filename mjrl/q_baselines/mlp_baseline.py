@@ -14,12 +14,11 @@ import pickle
 
 class MLPBaseline:
     def __init__(self, env_spec, obs_dim=None, learn_rate=1e-3, reg_coef=0.0,
-                 batch_size=64, epochs=1, num_iters=1, use_gpu=False, hidden_sizes=[128,128]):
+                 batch_size=64, epochs=1, use_gpu=False, hidden_sizes=[128,128]):
         self.d = env_spec.observation_dim + env_spec.action_dim
         self.batch_size = batch_size
         self.epochs = epochs
         self.reg_coef = reg_coef
-        self.num_iters = num_iters
         self.use_gpu = use_gpu
 
         modules = [nn.Linear(self.d + 4, hidden_sizes[0]), nn.ReLU()]
@@ -121,48 +120,51 @@ class MLPBaseline:
         batches_y = []
 
         # pick all batches before-hand so we can compute pre and post errors
-        for _ in range(self.num_iters):
-            rand_idx = np.random.permutation(n)[:self.batch_size]
+        # TODO This could cause memory issues?
+        for _ in range(self.epochs):
+            rand_idx_all = np.random.permutation(n)
+            for mb in range(n // self.batch_size - 1):
+                rand_idx = rand_idx_all[mb*self.batch_size:(mb+1)*self.batch_size]
 
-            replay_buffer['last_update'][rand_idx] = replay_buffer['t']
+                replay_buffer['last_update'][rand_idx] = replay_buffer['t']
 
-            observations_prime = replay_buffer['observations_prime'][rand_idx]
-            actions_prime = np.stack([policy.get_action(obs)[0] for obs in observations_prime])
-            
-            path = {
-                'observations': replay_buffer['observations'][rand_idx],
-                'actions': replay_buffer['actions'][rand_idx]
-            }
+                observations_prime = replay_buffer['observations_prime'][rand_idx]
+                actions_prime = np.stack([policy.get_action(obs)[0] for obs in observations_prime])
+                
+                path = {
+                    'observations': replay_buffer['observations'][rand_idx],
+                    'actions': replay_buffer['actions'][rand_idx]
+                }
 
-            path_prime = {
-                'observations': observations_prime,
-                'actions': actions_prime
-            }
+                path_prime = {
+                    'observations': observations_prime,
+                    'actions': actions_prime
+                }
 
-            Qs = self.predict(path_prime)
-            targets = replay_buffer['rewards'][rand_idx] + gamma*Qs
-            featmat = np.array(self._features(path))
+                Qs = self.predict(path_prime)
+                targets = replay_buffer['rewards'][rand_idx] + gamma*Qs
+                featmat = np.array(self._features(path))
 
-            featmat = featmat.astype('float32')
-            returns = targets.astype('float32')
+                featmat = featmat.astype('float32')
+                returns = targets.astype('float32')
 
-            if self.use_gpu:
-                featmat_var = Variable(torch.from_numpy(featmat).cuda(), requires_grad=False)
-                returns_var = Variable(torch.from_numpy(returns).cuda(), requires_grad=False)
-            else:
-                featmat_var = Variable(torch.from_numpy(featmat), requires_grad=False)
-                returns_var = Variable(torch.from_numpy(returns), requires_grad=False)
-
-            if return_errors:
                 if self.use_gpu:
-                    predictions = self.model(featmat_var).cpu().data.numpy().ravel()
+                    featmat_var = Variable(torch.from_numpy(featmat).cuda(), requires_grad=False)
+                    returns_var = Variable(torch.from_numpy(returns).cuda(), requires_grad=False)
                 else:
-                    predictions = self.model(featmat_var).data.numpy().ravel()
-                errors = returns.ravel() - predictions
-                errors_before.append(errors)
+                    featmat_var = Variable(torch.from_numpy(featmat), requires_grad=False)
+                    returns_var = Variable(torch.from_numpy(returns), requires_grad=False)
 
-            batches_x.append(featmat_var)
-            batches_y.append(returns_var)
+                if return_errors:
+                    if self.use_gpu:
+                        predictions = self.model(featmat_var).cpu().data.numpy().ravel()
+                    else:
+                        predictions = self.model(featmat_var).data.numpy().ravel()
+                    errors = returns.ravel() - predictions
+                    errors_before.append(errors)
+
+                batches_x.append(featmat_var)
+                batches_y.append(returns_var)
         
         for batch_x, batch_y in zip(batches_x, batches_y):
             self.optimizer.zero_grad()
@@ -187,89 +189,6 @@ class MLPBaseline:
             error_before = np.sum(before**2) / (np.sum(returns**2) + 1e-8)
             error_after = np.sum(after**2) / (np.sum(returns**2) + 1e-8)
             return error_before, error_after
-
-
-
-    # def fit_off_policy(self, replay_buffer, policy, gamma, return_errors=False):
-        
-    #     # TODO: make this in baseline, so we don't rewrite the code
-    #     # TODO: use fit() in fit_off_policy?
-    #     states = []
-    #     actions = []
-    #     state_primes = []
-    #     action_primes = []
-    #     rewards = []
-        
-    #     # TODO optimize
-    #     for path in replay_buffer:
-    #         l = len(path["observations"])
-    #         for i, (s, a, r) in enumerate(zip(path["observations"], path["actions"], path["rewards"])):
-    #             if i == l - 1:
-    #                 break
-    #             sp = path["observations"][i+1]
-    #             states.append(s)
-    #             actions.append(a)
-    #             state_primes.append(sp)
-    #             ap, _ = policy.get_action(sp)
-    #             action_primes.append(ap)
-    #             rewards.append(r)
-    #     rewards = np.array(rewards)
-        
-    #     faux_path = {
-    #         'observations': np.stack(states),
-    #         'actions': np.stack(actions)
-    #     }
-    #     faux_path_prime = {
-    #         'observations': np.stack(state_primes),
-    #         'actions': np.stack(action_primes)
-    #     }
-
-    #     Qs = self.predict(faux_path_prime)
-
-    #     targets = rewards + gamma*Qs
-    #     featmat = np.array(self._features(faux_path))
-
-    #     featmat = featmat.astype('float32')
-    #     returns = targets.astype('float32')
-    #     num_samples = returns.shape[0]
-
-    #     # Make variables with the above data
-    #     if self.use_gpu:
-    #         featmat_var = Variable(torch.from_numpy(featmat).cuda(), requires_grad=False)
-    #         returns_var = Variable(torch.from_numpy(returns).cuda(), requires_grad=False)
-    #     else:
-    #         featmat_var = Variable(torch.from_numpy(featmat), requires_grad=False)
-    #         returns_var = Variable(torch.from_numpy(returns), requires_grad=False)
-
-    #     if return_errors:
-    #         if self.use_gpu:
-    #             predictions = self.model(featmat_var).cpu().data.numpy().ravel()
-    #         else:
-    #             predictions = self.model(featmat_var).data.numpy().ravel()
-    #         errors = returns.ravel() - predictions
-    #         error_before = np.sum(errors**2)/(np.sum(returns**2) + 1e-8)
-
-    #     for i in range(self.num_iters):
-    #         rand_idx = np.random.permutation(num_samples)[:self.batch_size]
-
-    #         batch_x = featmat_var[torch.from_numpy(rand_idx)]
-    #         batch_y = returns_var[torch.from_numpy(rand_idx)]
-    #         self.optimizer.zero_grad()
-    #         yhat = self.model(batch_x)
-    #         loss = self.loss_function(yhat, batch_y)
-    #         loss.backward()
-    #         self.optimizer.step()
-
-    #     if return_errors:
-    #         if self.use_gpu:
-    #             predictions = self.model(featmat_var).cpu().data.numpy().ravel()
-    #         else:
-    #             predictions = self.model(featmat_var).data.numpy().ravel()
-    #         errors = returns.ravel() - predictions
-    #         error_after = np.sum(errors**2)/(np.sum(returns**2) + 1e-8)
-    #         return error_before, error_after
-
-
 
 
     def predict(self, path):
