@@ -10,6 +10,9 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 
+import time
+from mjrl.utils.logger import DataLog
+
 import pickle
 
 class MLPBaseline:
@@ -20,6 +23,8 @@ class MLPBaseline:
         self.epochs = epochs
         self.reg_coef = reg_coef
         self.use_gpu = use_gpu
+
+        self.logger = DataLog()
 
         modules = [nn.Linear(self.d + 4, hidden_sizes[0]), nn.ReLU()]
 
@@ -118,9 +123,13 @@ class MLPBaseline:
         errors_after = []
         batches_x = []
         batches_y = []
+        returns_list = []
 
         # pick all batches before-hand so we can compute pre and post errors
         # TODO This could cause memory issues?
+
+        batch_start = time.time()
+
         for _ in range(self.epochs):
             rand_idx_all = np.random.permutation(n)
             for mb in range(n // self.batch_size - 1):
@@ -165,7 +174,12 @@ class MLPBaseline:
 
                 batches_x.append(featmat_var)
                 batches_y.append(returns_var)
+                returns_list.append(returns)
         
+        print('time_batch', time.time() - batch_start)
+
+        train_start = time.time()
+
         for batch_x, batch_y in zip(batches_x, batches_y):
             self.optimizer.zero_grad()
             yhat = self.model(batch_x)
@@ -181,11 +195,13 @@ class MLPBaseline:
                 errors = batch_y.cpu().data.numpy().ravel() - predictions
                 errors_after.append(errors)
                 
-        
+        print('time_train', time.time() - train_start)
+
+
         if return_errors:
             before = np.concatenate(errors_before)
             after = np.concatenate(errors_after)
-            returns = np .concatenate(batches_y)
+            returns = np.concatenate(returns_list)
             error_before = np.sum(before**2) / (np.sum(returns**2) + 1e-8)
             error_after = np.sum(after**2) / (np.sum(returns**2) + 1e-8)
             return error_before, error_after

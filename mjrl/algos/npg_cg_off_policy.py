@@ -83,7 +83,95 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
             Hvp = self.HVP(*full_inp)
             return Hvp
         return eval
+    
+    def update_policy(self, observations, actions, weights, paths):
+        t_gLL = 0.0
+        t_FIM = 0.0
 
+        # Optimization algorithm
+        # --------------------------
+        surr_before = self.CPI_surrogate(observations, actions, weights).data.numpy().ravel()[0]
+
+        # VPG
+        ts = timer.time()
+        vpg_grad = self.flat_vpg(observations, actions, weights)
+        t_gLL += timer.time() - ts
+
+        # NPG
+        ts = timer.time()
+        hvp = self.build_Hvp_eval([observations, actions],
+                                  regu_coef=self.FIM_invert_args['damping'])
+        npg_grad = cg_solve(hvp, vpg_grad, x_0=vpg_grad.copy(),
+                            cg_iters=self.FIM_invert_args['iters'])
+        t_FIM += timer.time() - ts
+
+        # Step size computation
+        # --------------------------
+        if self.alpha is not None:
+            alpha = self.alpha
+            n_step_size = (alpha ** 2) * np.dot(vpg_grad.T, npg_grad)
+        else:
+            n_step_size = self.n_step_size
+            alpha = np.sqrt(np.abs(self.n_step_size / (np.dot(vpg_grad.T, npg_grad) + 1e-20)))
+
+        # Policy update
+        # --------------------------
+        curr_params = self.policy.get_param_values()
+        new_params = curr_params + alpha * npg_grad
+        self.policy.set_param_values(new_params, set_new=True, set_old=False)
+        surr_after = self.CPI_surrogate(observations, actions, weights).data.numpy().ravel()[0]
+        kl_dist = self.kl_old_new(observations, actions).data.numpy().ravel()[0]
+        self.policy.set_param_values(new_params, set_new=True, set_old=True)
+
+        # Log information
+        if self.save_logs:
+            self.logger.log_kv('alpha', alpha)
+            self.logger.log_kv('delta', n_step_size)
+            self.logger.log_kv('time_vpg', t_gLL)
+            self.logger.log_kv('time_npg', t_FIM)
+            self.logger.log_kv('kl_dist', kl_dist)
+            self.logger.log_kv('surr_improvement', surr_after - surr_before)
+            self.logger.log_kv('running_score', self.running_score)
+            try:
+                self.env.env.env.evaluate_success(paths, self.logger)
+            except:
+                # nested logic for backwards compatibility. TODO: clean this up.
+                try:
+                    success_rate = self.env.env.env.evaluate_success(paths)
+                    self.logger.log_kv('success_rate', success_rate)
+                except:
+                    pass
+
+
+
+    def train_from_replay_buffer(self, paths):
+        
+        observations = self.replay_buffer['observations']
+
+        actions = self.policy.get_action_batch(observations)
+
+        predictions = self.baseline.predict({'observations': observations, 'actions': actions})
+        
+        print('update_policy')
+        up = timer.time()
+        self.update_policy(observations, actions, predictions, paths)
+        print('update_policy done', timer.time() - up)
+
+        print('path_returns')
+        pr = timer.time()
+
+        path_returns = [sum(p["rewards"]) for p in paths]
+        mean_return = np.mean(path_returns)
+        std_return = np.std(path_returns)
+        min_return = np.amin(path_returns)
+        max_return = np.amax(path_returns)
+        base_stats = [mean_return, std_return, min_return, max_return]
+
+        print('path_returns done', timer.time() - pr)
+
+
+        return base_stats
+    
     # ----------------------------------------------------------
     def train_from_paths(self, paths):
 
