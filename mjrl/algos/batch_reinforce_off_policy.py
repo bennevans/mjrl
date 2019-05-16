@@ -67,12 +67,12 @@ class BatchREINFORCEOffPolicy:
 
     # ----------------------------------------------------------
     def train_step(self, N,
-                   sample_mode='trajectories',
-                   env_name=None,
-                   T=1e6,
-                   gamma=0.995,
-                   gae_lambda=0.98,
-                   num_cpu='max'):
+                    sample_mode='trajectories',
+                    env_name=None,
+                    T=1e6,
+                    gamma=0.995,
+                    gae_lambda=0.98,
+                    num_cpu='max'):
         
         print('train_step')
         ts_time = timer.time()
@@ -87,10 +87,10 @@ class BatchREINFORCEOffPolicy:
 
         if sample_mode == 'trajectories':
             paths = trajectory_sampler.sample_paths_parallel(N, self.policy, T, env_name,
-                                                             self.seed, num_cpu)
+                                                            self.seed, num_cpu)
         elif sample_mode == 'samples':
             paths = batch_sampler.sample_paths(N, self.policy, T, env_name=env_name,
-                                               pegasus_seed=self.seed, num_cpu=num_cpu)
+                                                pegasus_seed=self.seed, num_cpu=num_cpu)
         
 
         if self.save_logs:

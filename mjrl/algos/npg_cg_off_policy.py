@@ -23,16 +23,19 @@ from mjrl.algos.batch_reinforce_off_policy import BatchREINFORCEOffPolicy
 
 class NPGOffPolicy(BatchREINFORCEOffPolicy):
     def __init__(self, env, policy, baseline,
-                 normalized_step_size=0.01,
-                 const_learn_rate=None,
-                 FIM_invert_args={'iters': 10, 'damping': 1e-4},
-                 hvp_sample_frac=1.0,
-                 seed=None,
-                 save_logs=False,
-                 kl_dist=None,
-                 max_dataset_size=-1,
-                 fit_off_policy=True,
-                 fit_on_policy=False):
+                    normalized_step_size=0.01,
+                    const_learn_rate=None,
+                    FIM_invert_args={'iters': 10, 'damping': 1e-4},
+                    hvp_sample_frac=1.0,
+                    seed=None,
+                    save_logs=False,
+                    kl_dist=None,
+                    max_dataset_size=-1,
+                    fit_off_policy=True,
+                    fit_on_policy=False,
+                    use_batches=False,
+                    epochs=1,
+                    batch_size=256):
         """
         All inputs are expected in mjrl's format unless specified
         :param normalized_step_size: Normalized step size (under the KL metric). Twice the desired KL distance
@@ -54,6 +57,9 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
         self.FIM_invert_args = FIM_invert_args
         self.hvp_subsample = hvp_sample_frac
         self.running_score = None
+        self.use_batches = use_batches
+        self.epochs = epochs
+        self.batch_size = batch_size
         if save_logs: self.logger = DataLog()
 
     def HVP(self, observations, actions, vector, regu_coef=None):
@@ -90,7 +96,6 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
 
         # Optimization algorithm
         # --------------------------
-        surr_before = self.CPI_surrogate(observations, actions, weights).data.numpy().ravel()[0]
 
         # VPG
         ts = timer.time()
@@ -119,7 +124,39 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
         curr_params = self.policy.get_param_values()
         new_params = curr_params + alpha * npg_grad
         self.policy.set_param_values(new_params, set_new=True, set_old=False)
-        surr_after = self.CPI_surrogate(observations, actions, weights).data.numpy().ravel()[0]
+
+        return alpha, n_step_size, t_gLL, t_FIM, new_params
+
+
+    def train_from_replay_buffer(self, paths):
+        
+        observations = self.replay_buffer['observations']
+
+        actions = self.policy.get_action_batch(observations)
+
+        predictions = self.baseline.predict({'observations': observations, 'actions': actions})
+        
+        surr_before = self.CPI_surrogate(observations, actions, predictions).data.numpy().ravel()[0]
+        n = observations.shape[0]
+        print('update_policy')
+        
+        up = timer.time()
+        if self.use_batches:
+            for ep in range(self.epochs):
+                rand_idx_all = np.random.permutation(n)
+                for mb in range(n // self.batch_size - 1):
+                    rand_idx = rand_idx_all[mb*self.batch_size:(mb+1)*self.batch_size]
+                    o_batch = observations[rand_idx, :]
+                    a_batch = actions[rand_idx, :]
+                    p_batch = predictions[rand_idx]
+                    # TODO averaging of these?
+                    alpha, n_step_size, t_gLL, t_FIM, new_params = self.update_policy(o_batch, a_batch, p_batch, paths)
+        else:
+            alpha, n_step_size, t_gLL, t_FIM, new_params = self.update_policy(observations, actions, predictions, paths)
+        
+        print('update_policy done', timer.time() - up)
+
+        surr_after = self.CPI_surrogate(observations, actions, predictions).data.numpy().ravel()[0]
         kl_dist = self.kl_old_new(observations, actions).data.numpy().ravel()[0]
         self.policy.set_param_values(new_params, set_new=True, set_old=True)
 
@@ -141,21 +178,6 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
                     self.logger.log_kv('success_rate', success_rate)
                 except:
                     pass
-
-
-
-    def train_from_replay_buffer(self, paths):
-        
-        observations = self.replay_buffer['observations']
-
-        actions = self.policy.get_action_batch(observations)
-
-        predictions = self.baseline.predict({'observations': observations, 'actions': actions})
-        
-        print('update_policy')
-        up = timer.time()
-        self.update_policy(observations, actions, predictions, paths)
-        print('update_policy done', timer.time() - up)
 
         print('path_returns')
         pr = timer.time()
