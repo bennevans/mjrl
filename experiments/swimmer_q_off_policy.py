@@ -27,22 +27,23 @@ host = subprocess.check_output('hostname').decode('utf-8').strip()
 e = GymEnv('mjrl_swimmer-v0')
 policy = MLP(e.spec, seed=SEED)
 # policy = LinearPolicy(e.spec)
-baseline = MLPBaseline(e.spec, num_iters=50)
-agent = BatchREINFORCEOffPolicy(e, policy, baseline, learn_rate=1e-3, seed=SEED, save_logs=True)
-# agent = NPGOffPolicy(e, policy, baseline, max_dataset_size=40000,
-    # const_learn_rate=0.1, seed=SEED, save_logs=True, fit_off_policy=True, fit_on_policy=False)
+baseline = MLPBaseline(e.spec, epochs=15, learn_rate=1e-3, batch_size=10000)
+# agent = BatchREINFORCEOffPolicy(e, policy, baseline, learn_rate=1e-5, seed=SEED, save_logs=True)
+agent = NPGOffPolicy(e, policy, baseline, seed=SEED, save_logs=True,
+    fit_off_policy=True, fit_on_policy=False, max_dataset_size=1e6,
+    kl_dist=0.01, epochs=1, batch_size=4096, use_batches=False)
 
 ts = timer.time()
 train_agent(job_name='debug_exp_{}_swimmer_baseline_q_off_mlp_{}'.format(host, suffix),
             agent=agent,
             seed=SEED,
-            niter=25,
+            niter=250,
             gamma=0.95,
             gae_lambda=0.97,
-            num_cpu=1,
+            num_cpu=12,
             sample_mode='trajectories',
-            num_traj=40,      # samples = 40*25 = 1000
-            save_freq=5,
+            num_traj=5,      # samples = 40*25 = 1000
+            save_freq=25,
             evaluation_rollouts=10)
 
 print("time taken = %f" % (timer.time()-ts))
