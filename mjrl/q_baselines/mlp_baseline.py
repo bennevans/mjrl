@@ -10,14 +10,13 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 
-import time
 from mjrl.utils.logger import DataLog
 
 import pickle
 
 class MLPBaseline:
     def __init__(self, env_spec, obs_dim=None, learn_rate=1e-3, reg_coef=0.0,
-                 batch_size=64, epochs=1, use_gpu=False, hidden_sizes=[128,128]):
+                batch_size=64, epochs=1, use_gpu=False, hidden_sizes=[128,128], err_tol=1e-6):
         self.d = env_spec.observation_dim + env_spec.action_dim
         self.batch_size = batch_size
         self.epochs = epochs
@@ -121,8 +120,6 @@ class MLPBaseline:
         # pick all batches before-hand so we can compute pre and post errors
         # TODO This could cause memory issues?
 
-        featurize = time.time()
-
         observations_prime = replay_buffer['observations_prime']
         actions_prime = policy.get_action_batch(observations_prime)
         
@@ -153,12 +150,22 @@ class MLPBaseline:
             else:
                 predictions = self.model(featmat_var).data.numpy().ravel()
             errors_before = targets.ravel() - predictions
-        
-        print('featurize time', time.time() - featurize)
-        
-        train_start = time.time()
+                
+        for ep in range(self.epochs):
+            if ep > 0:
+                Qs = self.predict(path_prime)
+                targets = (replay_buffer['rewards'] + gamma * Qs).astype('float32')
+                featmat = np.array(self._features(path)).astype('float32')
 
-        for _ in range(self.epochs):
+                if self.use_gpu:
+                    featmat_var = Variable(torch.from_numpy(featmat).cuda(), requires_grad=False)
+                    targets_var = Variable(torch.from_numpy(targets).cuda(), requires_grad=False)
+                else:
+                    featmat_var = Variable(torch.from_numpy(featmat), requires_grad=False)
+                    targets_var = Variable(torch.from_numpy(targets), requires_grad=False)
+
+
+
             rand_idx = np.random.permutation(n)
             for mb in range(n // self.batch_size - 1):
                 if self.use_gpu:
@@ -174,13 +181,20 @@ class MLPBaseline:
                 loss.backward()
                 self.optimizer.step()
 
-        print('time_train', time.time() - train_start)
-
         if return_errors:
+            Qs = self.predict(path_prime)
+            targets = (replay_buffer['rewards'] + gamma * Qs).astype('float32')
+            featmat = np.array(self._features(path)).astype('float32')
+
             if self.use_gpu:
+                featmat_var = Variable(torch.from_numpy(featmat).cuda(), requires_grad=False)
+                targets_var = Variable(torch.from_numpy(targets).cuda(), requires_grad=False)
                 predictions = self.model(featmat_var).cpu().data.numpy().ravel()
             else:
+                featmat_var = Variable(torch.from_numpy(featmat), requires_grad=False)
+                targets_var = Variable(torch.from_numpy(targets), requires_grad=False)
                 predictions = self.model(featmat_var).data.numpy().ravel()
+                
             errors_after = targets.ravel() - predictions
                 
 

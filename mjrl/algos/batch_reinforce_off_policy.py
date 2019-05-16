@@ -74,9 +74,6 @@ class BatchREINFORCEOffPolicy:
                     gae_lambda=0.98,
                     num_cpu='max'):
         
-        print('train_step')
-        ts_time = timer.time()
-        
         # Clean up input arguments
         if env_name is None: env_name = self.env.env_id
         if sample_mode != 'trajectories' and sample_mode != 'samples':
@@ -103,23 +100,13 @@ class BatchREINFORCEOffPolicy:
         # compute advantages
         process_samples.compute_advantages(paths, self.baseline, gamma, gae_lambda)
         # train from paths
-        # eval_statistics = self.train_from_paths(paths)
-        # eval_statistics.append(N)
 
         # train from replay buffer
-        print('update_replay_buffer')
-        urb_t = timer.time()
         self.update_replay_buffer(paths)
-        print('update_replay_buffer done', timer.time() - urb_t)
 
-        print('train_from_replay_buffer')
-        tfrb = timer.time()
         eval_statistics = self.train_from_replay_buffer(paths)
-        print('train_from_replay_buffer done', timer.time() - tfrb)
         eval_statistics.append(N)
 
-        print('fit_off_policy')
-        fop = timer.time()
         if self.save_logs:
             ts = timer.time()
             # TODO combine error after? throwing away rn
@@ -137,8 +124,6 @@ class BatchREINFORCEOffPolicy:
                 self.baseline.fit(paths)
             if self.fit_off_policy:
                 self.baseline.fit_off_policy(self.replay_buffer, self.policy, gamma)
-        print('fit_off_policy done', timer.time() - fop)
-        print('train_step done', timer.time() - ts_time)
 
         return eval_statistics
 
@@ -217,23 +202,15 @@ class BatchREINFORCEOffPolicy:
 
         predictions = self.baseline.predict({'observations': observations, 'actions': actions})
 
-        # TODO multiple iterations / batches?
-        # for epoch in range(self.update_epochs):
-
-        print('update_policy')
-        up = timer.time()
         self.update_policy(observations, actions, predictions, paths)
-        print('update_policy done', timer.time() - up)
 
-        print('path_returns')
-        pr = timer.time()
         path_returns = [sum(p["rewards"]) for p in paths]
         mean_return = np.mean(path_returns)
         std_return = np.std(path_returns)
         min_return = np.amin(path_returns)
         max_return = np.amax(path_returns)
         base_stats = [mean_return, std_return, min_return, max_return]
-        print('path_returns done', timer.time() - pr)
+
         return base_stats
 
 

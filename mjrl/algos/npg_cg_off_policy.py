@@ -131,31 +131,34 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
     def train_from_replay_buffer(self, paths):
         
         observations = self.replay_buffer['observations']
-
         actions = self.policy.get_action_batch(observations)
-
         predictions = self.baseline.predict({'observations': observations, 'actions': actions})
         
         surr_before = self.CPI_surrogate(observations, actions, predictions).data.numpy().ravel()[0]
         n = observations.shape[0]
-        print('update_policy')
         
-        up = timer.time()
+        # TODO averaging of stats, not just last iter
         if self.use_batches:
             for ep in range(self.epochs):
+                if ep > 0:
+                    actions = self.policy.get_action_batch(observations)
+                    predictions = self.baseline.predict({'observations': observations, 'actions': actions})
+            
                 rand_idx_all = np.random.permutation(n)
                 for mb in range(n // self.batch_size - 1):
                     rand_idx = rand_idx_all[mb*self.batch_size:(mb+1)*self.batch_size]
                     o_batch = observations[rand_idx, :]
                     a_batch = actions[rand_idx, :]
                     p_batch = predictions[rand_idx]
-                    # TODO averaging of these?
+                    
                     alpha, n_step_size, t_gLL, t_FIM, new_params = self.update_policy(o_batch, a_batch, p_batch, paths)
         else:
-            alpha, n_step_size, t_gLL, t_FIM, new_params = self.update_policy(observations, actions, predictions, paths)
+            for ep in range(self.epochs):
+                if ep > 0:
+                    actions = self.policy.get_action_batch(observations)
+                    predictions = self.baseline.predict({'observations': observations, 'actions': actions})
+                alpha, n_step_size, t_gLL, t_FIM, new_params = self.update_policy(observations, actions, predictions, paths)
         
-        print('update_policy done', timer.time() - up)
-
         surr_after = self.CPI_surrogate(observations, actions, predictions).data.numpy().ravel()[0]
         kl_dist = self.kl_old_new(observations, actions).data.numpy().ravel()[0]
         self.policy.set_param_values(new_params, set_new=True, set_old=True)
@@ -179,18 +182,12 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
                 except:
                     pass
 
-        print('path_returns')
-        pr = timer.time()
-
         path_returns = [sum(p["rewards"]) for p in paths]
         mean_return = np.mean(path_returns)
         std_return = np.std(path_returns)
         min_return = np.amin(path_returns)
         max_return = np.amax(path_returns)
         base_stats = [mean_return, std_return, min_return, max_return]
-
-        print('path_returns done', timer.time() - pr)
-
 
         return base_stats
     
