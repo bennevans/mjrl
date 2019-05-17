@@ -145,7 +145,7 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
                     predictions = self.baseline.predict({'observations': observations, 'actions': actions})
             
                 rand_idx_all = np.random.permutation(n)
-                for mb in range(n // self.batch_size - 1):
+                for mb in range(max(n // self.batch_size - 1, 1)):
                     rand_idx = rand_idx_all[mb*self.batch_size:(mb+1)*self.batch_size]
                     o_batch = observations[rand_idx, :]
                     a_batch = actions[rand_idx, :]

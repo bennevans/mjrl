@@ -117,9 +117,6 @@ class MLPBaseline:
     def fit_off_policy(self, replay_buffer, policy, gamma, return_errors=False):
         n = replay_buffer['observations'].shape[0]        
 
-        # pick all batches before-hand so we can compute pre and post errors
-        # TODO This could cause memory issues?
-
         observations_prime = replay_buffer['observations_prime']
         actions_prime = policy.get_action_batch(observations_prime)
         
