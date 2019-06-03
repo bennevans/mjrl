@@ -27,11 +27,11 @@ host = subprocess.check_output('hostname').decode('utf-8').strip()
 e = GymEnv('mjrl_swimmer-v0')
 policy = MLP(e.spec, seed=SEED)
 # policy = LinearPolicy(e.spec)
-baseline = MLPBaseline(e.spec, epochs=15, learn_rate=1e-3, batch_size=10000)
+baseline = MLPBaseline(e.spec, epochs=15, learn_rate=1e-4, batch_size=10000)
 # agent = BatchREINFORCEOffPolicy(e, policy, baseline, learn_rate=1e-5, seed=SEED, save_logs=True)
 agent = NPGOffPolicy(e, policy, baseline, seed=SEED, save_logs=True,
-    fit_off_policy=True, fit_on_policy=False, max_dataset_size=1e6,
-    kl_dist=0.01, epochs=1, batch_size=4096, use_batches=False)
+    fit_off_policy=True, fit_on_policy=False, max_dataset_size=1000000,
+    kl_dist=0.05, epochs=1, batch_size=10000, use_batches=False)
 
 ts = timer.time()
 train_agent(job_name='debug_exp_{}_swimmer_baseline_q_off_mlp_{}'.format(host, suffix),
