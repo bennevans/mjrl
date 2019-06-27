@@ -16,10 +16,11 @@ import pickle
 
 class MLPBaseline:
     def __init__(self, env_spec, obs_dim=None, learn_rate=1e-3, reg_coef=0.0,
-                batch_size=64, epochs=1, use_gpu=False, hidden_sizes=[128,128], err_tol=1e-6):
+                batch_size=64, epochs=1, fit_iters=1, use_gpu=False, hidden_sizes=[128,128], err_tol=1e-6):
         self.d = env_spec.observation_dim + env_spec.action_dim
         self.batch_size = batch_size
         self.epochs = epochs
+        self.fit_iters = fit_iters
         self.reg_coef = reg_coef
         self.use_gpu = use_gpu
 
@@ -34,9 +35,11 @@ class MLPBaseline:
         modules.append(nn.Linear(hidden_sizes[-1], 1))
 
         self.model = nn.Sequential(*modules)
+        self.model_old = copy.deepcopy(self.model)
 
         if self.use_gpu:
             self.model.cuda()
+            self.model_old.cuda()
 
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=learn_rate, weight_decay=reg_coef)
         self.loss_function = torch.nn.MSELoss()
@@ -114,6 +117,13 @@ class MLPBaseline:
             error_after = np.sum(errors**2)/(np.sum(returns**2) + 1e-8)
             return error_before, error_after
 
+    def fit_off_policy_many(self, replay_buffer, policy, gamma):
+        self.model_old = copy.deepcopy(self.model)
+
+        for j in range(self.fit_iters):
+            self.fit_off_policy(replay_buffer, policy, gamma)
+
+
     def fit_off_policy(self, replay_buffer, policy, gamma, return_errors=False):
         n = replay_buffer['observations'].shape[0]        
 
@@ -130,7 +140,7 @@ class MLPBaseline:
             'actions': actions_prime
         }
 
-        Qs = self.predict(path_prime)
+        Qs = self.predict_old(path_prime)
         targets = (replay_buffer['rewards'] + gamma * Qs).astype('float32')
         featmat = np.array(self._features(path)).astype('float32')
 
@@ -147,7 +157,8 @@ class MLPBaseline:
             else:
                 predictions = self.model(featmat_var).data.numpy().ravel()
             errors_before = targets.ravel() - predictions
-                
+
+
         for ep in range(self.epochs):
             if ep > 0:
                 Qs = self.predict(path_prime)
@@ -177,6 +188,8 @@ class MLPBaseline:
                 loss = self.loss_function(yhat, batch_y)
                 loss.backward()
                 self.optimizer.step()
+
+        # self.model = copy.deepcopy(self.model_old)
 
         if return_errors:
             Qs = self.predict(path_prime)
@@ -210,4 +223,14 @@ class MLPBaseline:
         else:
             feat_var = Variable(torch.from_numpy(featmat).float(), requires_grad=False)
             prediction = self.model(feat_var).data.numpy().ravel()
+        return prediction
+
+    def predict_old(self, path):
+        featmat = self._features(path).astype('float32')
+        if self.use_gpu:
+            feat_var = Variable(torch.from_numpy(featmat).float().cuda(), requires_grad=False)
+            prediction = self.model_old(feat_var).cpu().data.numpy().ravel()
+        else:
+            feat_var = Variable(torch.from_numpy(featmat).float(), requires_grad=False)
+            prediction = self.model_old(feat_var).data.numpy().ravel()
         return prediction
