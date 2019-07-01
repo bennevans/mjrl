@@ -112,3 +112,6 @@ log.csv
 stoc_pol_mean.png
 results.txt
 MUJOCO_LOG.TXT
+
+experiments/
+
