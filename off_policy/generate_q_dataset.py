@@ -14,9 +14,9 @@ policy = pickle.load(open(policy_dir, 'rb'))
 e = GymEnv('mjrl_point_mass-v0')
 
 # dataset params
-K = 30
+K = 1000
 T = e.horizon
-seed = 10
+seed = 11
 
 rb = ReplayBuffer()
 

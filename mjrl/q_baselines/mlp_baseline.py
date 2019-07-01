@@ -118,10 +118,10 @@ class MLPBaseline:
             return error_before, error_after
 
     def fit_off_policy_many(self, replay_buffer, policy, gamma):
-        self.model_old = copy.deepcopy(self.model)
-
         for j in range(self.fit_iters):
-            self.fit_off_policy(replay_buffer, policy, gamma)
+            self.model_old = copy.deepcopy(self.model)
+            error_before, error_after = self.fit_off_policy(replay_buffer, policy, gamma, return_errors=True)
+            print(j, error_before, error_after)
 
 
     def fit_off_policy(self, replay_buffer, policy, gamma, return_errors=False):
