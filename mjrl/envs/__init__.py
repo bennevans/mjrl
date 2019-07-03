@@ -19,7 +19,8 @@ register(
 register(
     id='mjrl_acrobot-v0',
     entry_point='mjrl.envs:AcrobotEnv',
-    max_episode_steps=200,
+    # max_episode_steps=2000,
+    max_episode_steps=400,
 )
 
 from mjrl.envs.mujoco_env import MujocoEnv

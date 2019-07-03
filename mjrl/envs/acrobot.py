@@ -9,18 +9,47 @@ class AcrobotEnv(mujoco_env.MujocoEnv, utils.EzPickle):
         utils.EzPickle.__init__(self)
 
     def _step(self, a):
-
         self.do_simulation(a, self.frame_skip)
+
         tip_height = self.data.sensordata[6]
-        ctrl_cost = 1e-3 * np.square(a).sum()
-        reward = tip_height - ctrl_cost
+        # dense reward
+        # ctrl_cost = 1e-3 * np.square(a).sum()
+        # reward = tip_height - ctrl_cost
+        
+
+        # sparse reward
+        # reward = 0.0
+
+        # if tip_height > 1.9:
+        #     reward += 1
+
+        # shaped reward
+        reward = tip_height
+
+        if tip_height > 1.9:
+            reward += 1.0
+
+            # success_vel_pen = 1e-2 * np.abs(self.data.qvel[0])
+            success_vel_pen = 1e-1 * np.linalg.norm(self.data.qvel)
+
+            reward -= success_vel_pen
+
+            # ctrl_cost = 1e-4 * np.square(a).sum()
+            # reward -= ctrl_cost
+        
+        # vel_pen = 1e-3 * np.abs(self.data.qvel[0])
+        # acc_pen = 1e-3 * np.linalg.norm(self.data.qacc)
+
+        # reward -= vel_pen
 
         ob = self._get_obs()
         return ob, reward, False, {}
 
     def _get_obs(self):
+        wrapped_to_pi = (self.data.qpos + np.pi) % (2 * np.pi) - np.pi
+
         return np.concatenate([
-            self.data.qpos.flat,
+            wrapped_to_pi,
             self.data.qvel.flat,
         ])
 
