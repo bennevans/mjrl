@@ -9,20 +9,20 @@ import time as timer
 SEED = 500
 
 e = GymEnv('mjrl_acrobot-v0')
-policy = MLP(e.spec, hidden_sizes=(32,32), seed=SEED)
+policy = MLP(e.spec, hidden_sizes=(64,64), seed=SEED)
 baseline = MLPBaseline(e.spec, reg_coef=1e-3, batch_size=64, epochs=5, learn_rate=1e-3)
-agent = NPG(e, policy, baseline, normalized_step_size=0.1, seed=SEED, save_logs=True)
+agent = NPG(e, policy, baseline, normalized_step_size=0.05, seed=SEED, save_logs=True)
 
 ts = timer.time()
 train_agent(job_name='acrobot_exp1',
             agent=agent,
             seed=SEED,
-            niter=50,
+            niter=200,
             gamma=0.995,  
             gae_lambda=0.97,
-            num_cpu=1,
+            num_cpu=6,
             sample_mode='trajectories',
-            num_traj=10,      # samples = 10*500 = 5000
+            num_traj=20,      # samples = 10*500 = 5000
             save_freq=5,
             evaluation_rollouts=5)
 print("time taken = %f" % (timer.time()-ts))

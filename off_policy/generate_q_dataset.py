@@ -7,14 +7,22 @@ import mjrl.envs
 
 import pickle
 
-policy_dir = 'point_mass_exp1/iterations/best_policy.pickle'
+mode = 'acrobot'
+
+if mode == 'pm':
+    policy_dir = 'point_mass_exp1/iterations/best_policy.pickle'
+    e = GymEnv('mjrl_point_mass-v0')
+elif mode == 'acrobot':
+    policy_dir = 'acrobot_exp1/iterations/best_policy.pickle'
+    e = GymEnv('mjrl_acrobot-v0')
+else:
+    raise Exception('bad mode: {}'.format(mode))
 
 policy = pickle.load(open(policy_dir, 'rb'))
 
-e = GymEnv('mjrl_point_mass-v0')
 
 # dataset params
-K = 1000
+K = 100
 T = e.horizon
 seed = 11
 

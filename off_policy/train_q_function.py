@@ -8,27 +8,34 @@ import matplotlib.pyplot as plt
 import mjrl.envs
 
 import pickle
+mode = 'acrobot'
 
-policy_dir = 'point_mass_exp1/iterations/best_policy.pickle'
+if mode == 'pm':
+    policy_dir = 'point_mass_exp1/iterations/best_policy.pickle'
+    e = GymEnv('mjrl_point_mass-v0')
+elif mode == 'acrobot':
+    policy_dir = 'acrobot_exp1/iterations/best_policy.pickle'
+    e = GymEnv('mjrl_acrobot-v0')
+else:
+    raise Exception('bad mode: {}'.format(mode))
 
 policy = pickle.load(open(policy_dir, 'rb'))
 rb = pickle.load(open('rb.pickle', 'rb'))
 paths = pickle.load(open('paths.pickle', 'rb'))
 
-e = GymEnv('mjrl_point_mass-v0')
 
-learn_rate = 1e-3
+learn_rate = 1e-4
 batch_size = 32
-epochs = 50
+epochs = 1
 hidden_sizes = [256, 256, 256]
-fit_iters = 500
+fit_iters = 250
 
 baseline = MLPBaseline(e,
     learn_rate=learn_rate, batch_size=batch_size, epochs=epochs,
     hidden_sizes=hidden_sizes, fit_iters=fit_iters)
 
 # params
-gamma = 0.95
+gamma = 0.995
 
 def get_first(path): 
     new_path = {} 
@@ -66,7 +73,7 @@ def evaluate(path):
     # print('----------')
     return pred, mc[0] + + gamma**T * last
 
-
+print('fitting baseline')
 baseline.fit_off_policy_many(rb, policy, gamma)
 
 preds = []
@@ -83,4 +90,7 @@ plt.scatter(preds, mc_terms)
 plt.show()
 plt.savefig('q_vs_mc.png')
 
-pickle.dump(baseline, open('baseline.pickle', 'wb'))
+if mode == 'pm':
+    pickle.dump(baseline, open('baseline.pickle', 'wb'))
+elif mode == 'acrobot':
+    pickle.dump(baseline, open('baseline_acro.pickle', 'wb'))
