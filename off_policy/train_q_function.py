@@ -25,10 +25,10 @@ paths = pickle.load(open('paths.pickle', 'rb'))
 
 
 learn_rate = 1e-4
-batch_size = 32
+batch_size = 128
 epochs = 1
-hidden_sizes = [256, 256, 256]
-fit_iters = 250
+hidden_sizes = [64, 64]
+fit_iters = 100
 
 baseline = MLPBaseline(e,
     learn_rate=learn_rate, batch_size=batch_size, epochs=epochs,
@@ -37,60 +37,52 @@ baseline = MLPBaseline(e,
 # params
 gamma = 0.995
 
-def get_first(path): 
-    new_path = {} 
-    for k in path: 
-        try: 
-            new_path[k] = path[k][0:1] 
-        except: 
-            pass 
-    return new_path 
-
-def get_last(path): 
-    new_path = {} 
-    for k in path: 
-        try: 
-            new_path[k] = path[k][-1:] 
-        except: 
-            pass 
-    return new_path 
-
-def evaluate(path):
-    T = len(path['actions'])
-    p0 = get_first(path)
-    pl = get_last(path)
-    pred = baseline.predict(p0)
-    last = baseline.predict(pl)
-    mc = discount_sum(path['rewards'], gamma)
-    # print('----------')
-    # print("Q(s,a), MC + terminal")
-    # print(pred, mc[0] + + gamma**T * last)
-    # print("Monte Carlo Rollout")
-    # print(mc[0])
-    # print("MC + gamma^T * Q(s_T, a_T)")
-    # print(mc[0] + + gamma**T * last)
-    # print("max q", (1-gamma**T) / (1-gamma))
-    # print('----------')
-    return pred, mc[0] + + gamma**T * last
-
 print('fitting baseline')
 baseline.fit_off_policy_many(rb, policy, gamma)
 
-preds = []
-mc_terms = []
-for path in paths:
-    pred, mc_term = evaluate(path)
-    preds.append(pred[0])
-    mc_terms.append(mc_term[0])
-    print(pred, mc_term)
-
-plt.xlabel('$Q(s_1,a_1)$')
-plt.ylabel('$MC + \\gamma^T Q(s_T, a_T)$')
-plt.scatter(preds, mc_terms)
-plt.show()
-plt.savefig('q_vs_mc.png')
-
+print('saving!')
 if mode == 'pm':
     pickle.dump(baseline, open('baseline.pickle', 'wb'))
 elif mode == 'acrobot':
     pickle.dump(baseline, open('baseline_acro.pickle', 'wb'))
+
+# do some light evaluation right after training
+from evaluate_q_function import *
+
+print('evaluating')
+pred_1, mc_1 = evaluate_n_step(1, gamma, paths, baseline)
+pred_5, mc_5 = evaluate_n_step(5, gamma, paths, baseline)
+pred_start_end, mc_start_end = evaluate_start_end(gamma, paths, baseline)
+
+print('1 step')
+print('mse', mse(pred_1, mc_1))
+print('line_fit', line_fit(pred_1, mc_1))
+
+plt.figure()
+plt.xlabel('$Q(s_1,a_1)$')
+plt.ylabel('$MC + \\gamma^T Q(s_2, a_2)$')
+plt.title('1 step')
+plt.scatter(pred_1, mc_1)
+
+print('5 step')
+print('mse', mse(pred_5, mc_5))
+print('line_fit', line_fit(pred_5, mc_5))
+
+plt.figure()
+plt.xlabel('$Q(s_1,a_1)$')
+plt.ylabel('$MC + \\gamma^T Q(s_5, a_5)$')
+plt.title('5 step')
+plt.scatter(pred_5, mc_5)
+
+
+print('T step')
+print('mse', mse(pred_start_end, mc_start_end))
+print('line_fit', line_fit(pred_start_end, mc_start_end))
+
+plt.figure()
+plt.xlabel('$Q(s_1,a_1)$')
+plt.ylabel('$MC + \\gamma^T Q(s_T, a_T)$')
+plt.title('T step')
+plt.scatter(pred_start_end, mc_start_end)
+
+plt.show()
