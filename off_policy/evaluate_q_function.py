@@ -52,7 +52,6 @@ def evaluate_start_end(gamma, paths, baseline):
         pred, mc_term = evaluate(path, gamma, baseline)
         preds.append(pred[0])
         mc_terms.append(mc_term[0])
-        print(pred, mc_term)
     return preds, mc_terms
 
 def evaluate_n_step(n, gamma, paths, baseline):
@@ -78,8 +77,8 @@ def line_fit(pred, mc):
     model = LinearRegression()
     model.fit(X, y)
     r_sq = model.score(X, y)
-    b = model.intercept_
-    m = model.coef_[0]
+    b = model.intercept_.tolist()
+    m = model.coef_[0].tolist()
     return m, b, r_sq
 
 if __name__ == '__main__':
