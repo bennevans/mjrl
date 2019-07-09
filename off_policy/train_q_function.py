@@ -12,14 +12,17 @@ mode = 'acrobot'
 
 
 
-def train_baseline(env, rb, policy, epochs, fit_iters, learn_rate, batch_size, hidden_sizes, gamma):
+def train_baseline(env, rb, policy, epochs, fit_iters, learn_rate, batch_size, hidden_sizes, gamma, return_error=False):
 
     baseline = MLPBaseline(env,
         learn_rate=learn_rate, batch_size=batch_size, epochs=epochs,
         hidden_sizes=hidden_sizes, fit_iters=fit_iters)
 
-    baseline.fit_off_policy_many(rb, policy, gamma)
+    final_bellman_error = baseline.fit_off_policy_many(rb, policy, gamma)
     
+    if return_error:
+        return baseline, final_bellman_error
+        
     return baseline
 
 

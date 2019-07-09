@@ -122,6 +122,7 @@ class MLPBaseline:
             self.model_old = copy.deepcopy(self.model)
             error_before, error_after = self.fit_off_policy(replay_buffer, policy, gamma, return_errors=True)
             print(j, error_before, error_after)
+        return error_after
 
 
     def fit_off_policy(self, replay_buffer, policy, gamma, return_errors=False):
@@ -161,7 +162,8 @@ class MLPBaseline:
 
         for ep in range(self.epochs):
             if ep > 0:
-                Qs = self.predict(path_prime)
+                # Qs = self.predict(path_prime) # TODO set flag for both?
+                Qs = self.predict_old(path_prime)
                 targets = (replay_buffer['rewards'] + gamma * Qs).astype('float32')
                 featmat = np.array(self._features(path)).astype('float32')
 

@@ -10,8 +10,9 @@ import pickle
 import os
 import itertools
 import json
+import time
 
-def run_exp_many(env, n, rb, policy, params, gamma):
+def run_exp_many(env, n, rb, policy, params, gamma, return_errors=False):
     epochs = params['epochs']
     fit_iters = params['fit_iters']
     batch_size = params['batch_size']
@@ -19,9 +20,15 @@ def run_exp_many(env, n, rb, policy, params, gamma):
     lr = params['lr']
 
     baselines = []
+    errors = []
     for _ in range(n):
-        baseline = train_baseline(e, rb, policy, epochs, fit_iters, lr, batch_size, hidden_sizes, gamma)
+        baseline, error = train_baseline(e, rb, policy, epochs, fit_iters,
+            lr, batch_size, hidden_sizes, gamma, return_error=True)
         baselines.append(baseline)
+        errors.append(error)
+
+    if return_errors:
+        return baselines, errors
 
     return baselines
 
@@ -149,11 +156,7 @@ def enumerate_run_save(env, n, rb, paths, policy, possible_params, gamma, base_d
         print('experiment directory already exists! exiting')
         return
 
-    metadata = os.path.join(base_dir, 'possible_params.json')
     results = os.path.join(base_dir, 'results.json')
-
-    with open(metadata, 'w') as f:
-        json.dump(possible_params, f, sort_keys=True, indent=4)
 
     param_list = get_param_list(possible_params)
 
@@ -161,13 +164,23 @@ def enumerate_run_save(env, n, rb, paths, policy, possible_params, gamma, base_d
 
     for i, params in enumerate(param_list):
         print(i, params)
-        baselines = run_exp_many(env, n, rb, policy, params, gamma)
+        start_time = time.time()
+        baselines, errors = run_exp_many(env, n, rb, policy, params, gamma, return_errors=True)
+        run_end_time = time.time()
 
         exp_info_dict = evaluate_and_save_baselines(baselines, params, paths, base_dir, i, gamma)
+        eval_end_time = time.time()
 
         all_info[i] = {
             'params': params,
-            'info': exp_info_dict
+            'info': exp_info_dict,
+            'bellman_errors': errors,
+            'start_time': start_time,
+            'run_end_time': run_end_time,
+            'eval_end_time': eval_end_time,
+            'total_runtime': eval_end_time - start_time,
+            'run_runtime': run_end_time - start_time,
+            'eval_runtime': eval_end_time - run_end_time
         }
     
     with open(results, 'w') as f:
@@ -183,17 +196,36 @@ if __name__ == '__main__':
     rb = pickle.load(open('rb.pickle', 'rb'))
     paths = pickle.load(open('paths.pickle', 'rb'))
 
-    base_dir = './q_exps/vary_epochs/'
+    base_dir = './q_exps/vary_hidden_size/'
 
     gamma = 0.995
-    n = 2
+    n = 5
 
     possible_params = {
-        'epochs': [1, 2, 5, 20, 100],
-        'fit_iters': [50],
+        'epochs': [1],
+        'fit_iters': [1000],
         'batch_size': [64],
-        'hidden_sizes': [(64, 64)],
-        'lrs': [1e-4]
+        'hidden_sizes': [(64, 64), (256, 256), (1024, 1024)],
+        'lrs': [1e-4, 2e-4, 5e-5]
+    }
+    
+    start_time = time.time()
+    
+    metadata = {
+        'start_time': start_time,
+        'n': n,
+        'gamma': gamma,
+        'policy_dir': policy_dir,
+        'base_dir': base_dir,
+        'possible_params': possible_params
     }
 
     enumerate_run_save(e, n, rb, paths, policy, possible_params, gamma, base_dir)
+
+    metadata['end_time'] = time.time()
+    metadata['total_time'] = metadata['end_time'] - metadata['start_time']
+
+    metadata_dir = os.path.join(base_dir, 'metadata.json')
+
+    with open(metadata_dir, 'w') as f:
+        json.dump(metadata, f, sort_keys=True, indent=4)
