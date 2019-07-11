@@ -58,6 +58,7 @@ def do_evaluation_rollout(N,
         rewards = []
         agent_infos = []
         env_infos = []
+        times = []
 
         o = env.reset()
         done = False
@@ -74,15 +75,22 @@ def do_evaluation_rollout(N,
             agent_infos.append(agent_info)
             env_infos.append(env_info)
             o = next_o
+            times.append(t)
             t += 1
 
+        is_terminal = np.zeros(len(times))
+        is_terminal[-1] = 1
+        
         path = dict(
             observations=np.array(observations),
             actions=np.array(actions),
             rewards=np.array(rewards),
             agent_infos=tensor_utils.stack_tensor_dict_list(agent_infos),
             env_infos=tensor_utils.stack_tensor_dict_list(env_infos),
-            terminated=done
+            terminated=done,
+            times=np.array(times),
+            traj_length=np.ones_like(times) * times[-1],
+            is_terminal=is_terminal
         )
 
         paths.append(path)

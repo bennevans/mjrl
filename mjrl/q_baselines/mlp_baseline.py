@@ -16,17 +16,18 @@ import pickle
 
 class MLPBaseline:
     def __init__(self, env_spec, obs_dim=None, learn_rate=1e-3, reg_coef=0.0,
-                batch_size=64, epochs=1, fit_iters=1, use_gpu=False, hidden_sizes=[128,128], err_tol=1e-6):
+                batch_size=64, epochs=1, fit_iters=1, use_gpu=False, hidden_sizes=[128,128], err_tol=1e-6,
+                use_time=False):
         self.d = env_spec.observation_dim + env_spec.action_dim
         self.batch_size = batch_size
         self.epochs = epochs
         self.fit_iters = fit_iters
         self.reg_coef = reg_coef
         self.use_gpu = use_gpu
-
+        
         self.logger = DataLog()
 
-        modules = [nn.Linear(self.d + 4, hidden_sizes[0]), nn.ReLU()]
+        modules = [nn.Linear(self.d + int(use_time), hidden_sizes[0]), nn.ReLU()]
 
         for i in range(len(hidden_sizes) - 1):
             modules.append(nn.Linear(hidden_sizes[i], hidden_sizes[i+1]))
@@ -41,6 +42,8 @@ class MLPBaseline:
             self.model.cuda()
             self.model_old.cuda()
 
+        self.use_time = use_time
+
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=learn_rate, weight_decay=reg_coef)
         self.loss_function = torch.nn.MSELoss()
 
@@ -49,24 +52,16 @@ class MLPBaseline:
 
         a = np.clip(path["actions"], -10, 10) # assumes actions are up-to-date
         
-        features = np.concatenate([o, a], axis=1)
+        feats_list = [o, a]
+
+        if self.use_time:
+            feats_list.append(np.expand_dims(path['times'] / path['traj_length'], axis=1))
+        features = np.concatenate(feats_list, axis=1)
 
         if features.ndim > 2:
             features = features.reshape(features.shape[0], -1)
-        N, n = features.shape
-        num_feat = int( n + 4 )            # linear + time till pow 4
-        feat_mat =  np.ones((N, num_feat)) # memory allocation
 
-        # linear features
-        feat_mat[:,:n] = features
-
-        k = 0  # start from this row
-        l = len(path["observations"])
-        al = np.arange(l)/1000.0
-        for j in range(4):
-            feat_mat[k:k+l, -4+j] = al**(j+1)
-        k += l
-        return feat_mat
+        return features
 
 
     def fit(self, paths, return_errors=False):
@@ -133,7 +128,7 @@ class MLPBaseline:
         
         path = {
             'observations': replay_buffer['observations'],
-            'actions': replay_buffer['actions']
+            'actions': replay_buffer['actions'],
         }
 
         path_prime = {
@@ -141,8 +136,19 @@ class MLPBaseline:
             'actions': actions_prime
         }
 
+        if(self.use_time):
+            path['times'] = replay_buffer['times']
+            path['traj_length'] = replay_buffer['traj_length']
+
+            path_prime['times'] = replay_buffer['times'] + 1
+            path_prime['traj_length'] = replay_buffer['traj_length']
+
         Qs = self.predict_old(path_prime)
         targets = (replay_buffer['rewards'] + gamma * Qs).astype('float32')
+
+        terminal_states = np.argwhere(replay_buffer['is_terminal'] == 1)
+        targets[terminal_states] = replay_buffer['rewards'][terminal_states]
+
         featmat = np.array(self._features(path)).astype('float32')
 
         if self.use_gpu:
@@ -165,6 +171,10 @@ class MLPBaseline:
                 # Qs = self.predict(path_prime) # TODO set flag for both?
                 Qs = self.predict_old(path_prime)
                 targets = (replay_buffer['rewards'] + gamma * Qs).astype('float32')
+
+                terminal_states = np.argwhere(replay_buffer['is_terminal'] == 1)
+                targets[terminal_states] = replay_buffer['rewards'][terminal_states]
+
                 featmat = np.array(self._features(path)).astype('float32')
 
                 if self.use_gpu:
@@ -196,6 +206,10 @@ class MLPBaseline:
         if return_errors:
             Qs = self.predict(path_prime)
             targets = (replay_buffer['rewards'] + gamma * Qs).astype('float32')
+
+            terminal_states = np.argwhere(replay_buffer['is_terminal'] == 1)
+            targets[terminal_states] = replay_buffer['rewards'][terminal_states]
+    
             featmat = np.array(self._features(path)).astype('float32')
 
             if self.use_gpu:

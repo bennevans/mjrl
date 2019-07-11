@@ -43,12 +43,12 @@ def get_best_mse(summary, length):
     return res, best
 
 def get_csv(results):
-    params_header = ['batch_size', 'epochs', 'fit_iters', 'hidden_sizes', 'lr']
+    params_header = ['batch_size', 'epochs', 'fit_iters', 'hidden_sizes', 'lr', 'use_time']
     results_header = ['mse', 'm', 'b', 'r2']
     all_rows = [params_header + ['length'] + results_header]
     for res in results.values():
         params_row = [res['params'][p] for p in params_header]
-        for length, data in res['info'].items():
+        for length, data in res['info_test'].items():
             n = len(data['mse'])
             rows = [[]] * n
             for i in range(n):
@@ -60,7 +60,7 @@ def get_csv(results):
 
 
 if __name__ == '__main__':
-    base_dir = './q_exps/vary_batch_size'
+    base_dir = './q_exps/acro_testing'
     data_dir = os.path.join(base_dir, 'results.json')
     output_dir = os.path.join(base_dir, 'results.csv')
 

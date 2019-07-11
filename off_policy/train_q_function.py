@@ -8,15 +8,14 @@ import matplotlib.pyplot as plt
 import mjrl.envs
 import pickle
 
-mode = 'acrobot'
+mode = 'pm'
 
-
-
-def train_baseline(env, rb, policy, epochs, fit_iters, learn_rate, batch_size, hidden_sizes, gamma, return_error=False):
+def train_baseline(env, rb, policy, epochs, fit_iters, learn_rate,
+    batch_size, hidden_sizes, gamma, return_error=False, use_time=False):
 
     baseline = MLPBaseline(env,
         learn_rate=learn_rate, batch_size=batch_size, epochs=epochs,
-        hidden_sizes=hidden_sizes, fit_iters=fit_iters)
+        hidden_sizes=hidden_sizes, fit_iters=fit_iters, use_time=use_time)
 
     final_bellman_error = baseline.fit_off_policy_many(rb, policy, gamma)
     
@@ -42,13 +41,14 @@ if __name__ == '__main__':
     paths = pickle.load(open('paths.pickle', 'rb'))
 
     learn_rate = 1e-4
-    batch_size = 128
+    batch_size = 64
     epochs = 1
     hidden_sizes = [64, 64]
-    fit_iters = 100
+    fit_iters = 250
     gamma = 0.995
 
-    baseline = train_baseline(e, rb, policy, epochs, fit_iters, learn_rate, batch_size, hidden_sizes, gamma)
+    baseline = train_baseline(e, rb, policy, epochs, fit_iters,
+        learn_rate, batch_size, hidden_sizes, gamma, use_time=True)
 
     if mode == 'pm':
         pickle.dump(baseline, open('baseline.pickle', 'wb'))
@@ -73,6 +73,8 @@ if __name__ == '__main__':
     plt.title('1 step')
     plt.scatter(pred_1, mc_1)
 
+    plt.savefig('scatter_1.png')
+
     print('5 step')
     print('mse', mse(pred_5, mc_5))
     print('line_fit', line_fit(pred_5, mc_5))
@@ -83,6 +85,7 @@ if __name__ == '__main__':
     plt.title('5 step')
     plt.scatter(pred_5, mc_5)
 
+    plt.savefig('scatter_5.png')
 
     print('T step')
     print('mse', mse(pred_start_end, mc_start_end))
@@ -94,4 +97,7 @@ if __name__ == '__main__':
     plt.title('T step')
     plt.scatter(pred_start_end, mc_start_end)
 
+    plt.savefig('scatter_end.png')
+
     plt.show()
+    
