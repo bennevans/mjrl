@@ -22,15 +22,20 @@ policy = pickle.load(open(policy_dir, 'rb'))
 
 
 # dataset params
-K = 100
+K = 10
 T = e.horizon
-seed = 11
+seed = 2
+
+print("K: {} T: {} seed: {} mode: {}".format(K, T, seed, mode))
 
 rb = ReplayBuffer()
 
 paths = sample_paths(K, policy, T=T, env=e, env_name='myenv_name', mode='evaluation')
 
 rb.update(paths)
+
+# pickle.dump(rb, open('rb_test.pickle', 'wb'))
+# pickle.dump(paths, open('paths_test.pickle', 'wb'))
 
 pickle.dump(rb, open('rb.pickle', 'wb'))
 pickle.dump(paths, open('paths.pickle', 'wb'))

@@ -115,3 +115,7 @@ MUJOCO_LOG.TXT
 
 experiments/
 off_policy/q_exps/
+off_policy/q_exps_no_time/
+
+off_policy/train_npg_*.py
+tests/vis.py

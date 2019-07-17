@@ -40,7 +40,6 @@ def get_param_list(possible_params):
     hidden_sizes = possible_params['hidden_sizes']
     lrs = possible_params['lrs']
     use_time = possible_params['use_time']
-
     params = [epochs, fit_iters, batch_size, hidden_sizes, lrs, use_time]
 
     permutations = itertools.product(*params)
@@ -235,17 +234,17 @@ if __name__ == '__main__':
 
     paths_test = pickle.load(open('paths_test.pickle', 'rb'))
 
-    base_dir = './q_exps/acro_fit_iters_0/'
+    base_dir = './q_exps/acro_sizes_epochs_fit_iters_0/'
     # base_dir = './q_exps/testing/'
 
     gamma = 0.995
-    n = 5
+    n = 3
 
     possible_params = {
-        'epochs': [1],
-        'fit_iters': [1000, 2000, 5000, 10000],
+        'epochs': [1, 2],
+        'fit_iters': [750, 1500],
         'batch_size': [64],
-        'hidden_sizes': [(64, 64)],
+        'hidden_sizes': [(64, 64, 64), (64, 64, 64, 64)],
         'lrs': [1e-4],
         'use_time': [True]
     }

@@ -19,6 +19,7 @@ import mjrl.utils.process_samples as process_samples
 from mjrl.utils.logger import DataLog
 from mjrl.utils.cg_solve import cg_solve
 from mjrl.algos.batch_reinforce_off_policy import BatchREINFORCEOffPolicy
+from mjrl.utils.replay_buffer import ReplayBuffer
 
 
 class NPGOffPolicy(BatchREINFORCEOffPolicy):
@@ -35,7 +36,9 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
                     fit_on_policy=False,
                     use_batches=False,
                     epochs=1,
-                    batch_size=256):
+                    batch_size=256,
+                    fit_iter_fn=None,
+                    drop_mode=ReplayBuffer.DROP_MODE_OLDEST):
         """
         All inputs are expected in mjrl's format unless specified
         :param normalized_step_size: Normalized step size (under the KL metric). Twice the desired KL distance
@@ -46,7 +49,8 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
         :param seed: random seed
         """
         super().__init__(env, policy, baseline, max_dataset_size=max_dataset_size,
-            fit_off_policy=fit_off_policy, fit_on_policy=fit_on_policy)
+            fit_off_policy=fit_off_policy, fit_on_policy=fit_on_policy,
+            fit_iter_fn=fit_iter_fn, drop_mode=drop_mode)
         self.env = env
         self.policy = policy
         self.baseline = baseline
@@ -134,6 +138,13 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
         actions = self.policy.get_action_batch(observations)
         predictions = self.baseline.predict({'observations': observations, 'actions': actions})
         
+        if self.save_logs:
+            self.logger.log_kv('Q_mean', np.mean(predictions))
+            self.logger.log_kv('Q_max', np.max(predictions))
+            self.logger.log_kv('Q_min', np.min(predictions))
+            self.logger.log_kv('Q_std', np.std(predictions))
+
+
         surr_before = self.CPI_surrogate(observations, actions, predictions).data.numpy().ravel()[0]
         n = observations.shape[0]
         

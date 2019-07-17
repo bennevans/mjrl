@@ -10,6 +10,7 @@ import torch.nn as nn
 from torch.autograd import Variable
 import copy
 
+
 # samplers
 import mjrl.samplers.trajectory_sampler as trajectory_sampler
 import mjrl.samplers.batch_sampler as batch_sampler
@@ -18,6 +19,82 @@ import mjrl.samplers.batch_sampler as batch_sampler
 import mjrl.utils.process_samples as process_samples
 from mjrl.utils.logger import DataLog
 
+from mjrl.utils.replay_buffer import ReplayBuffer
+from mjrl.utils.process_samples import discount_sum
+from sklearn.linear_model import LinearRegression
+
+def get_ith(path, i):
+    new_path = {} 
+    for k in path: 
+        try: 
+            new_path[k] = path[k][i:i+1] 
+        except: 
+            pass 
+    return new_path 
+
+def get_first(path):
+    return get_ith(path, 0)
+
+def get_last(path): 
+    last_idx = len(path['observations']) - 1
+    return get_ith(path, last_idx)
+
+def evaluate(path, gamma, baseline):
+    T = len(path['actions'])
+    p0 = get_first(path)
+    pl = get_last(path)
+    pred = baseline.predict(p0)
+    last = baseline.predict(pl)
+    mc = discount_sum(path['rewards'], gamma)
+    return pred, mc[0] + + gamma**T * last
+
+def evaluate_idx(path, start_idx, end_idx, gamma, baseline):
+    if start_idx >= end_idx:
+        raise IndexError('start_idx should be < than end_idx')
+    
+    p0 = get_ith(path, start_idx)
+    pl = get_ith(path, end_idx)
+    pred = baseline.predict(p0)
+    last = baseline.predict(pl)
+    mc = discount_sum(path['rewards'][start_idx:end_idx], gamma)
+
+    return pred, mc[0] + + gamma**(end_idx - start_idx) * last
+
+def evaluate_start_end(gamma, paths, baseline):
+    preds = []
+    mc_terms = []
+    for path in paths:
+        pred, mc_term = evaluate(path, gamma, baseline)
+        preds.append(pred[0])
+        mc_terms.append(mc_term[0])
+    return preds, mc_terms
+
+def evaluate_n_step(n, gamma, paths, baseline):
+    preds = []
+    mc_terms = []
+    for path in paths:
+        T = len(path['observations'])
+        for t in range(T-n):
+            pred, mc_term = evaluate_idx(path, t, t+n, gamma, baseline)
+            preds.append(pred[0])
+            mc_terms.append(mc_term[0])
+    return preds, mc_terms
+
+def mse(pred, mc):
+    pred = np.array(pred)
+    mc = np.array(mc)
+    n = len(mc)
+    return np.sum((pred - mc)**2) / n
+
+def line_fit(pred, mc):
+    X = np.array(pred).reshape((-1,1))
+    y = np.array(mc)
+    model = LinearRegression()
+    model.fit(X, y)
+    r_sq = model.score(X, y)
+    b = model.intercept_.tolist()
+    m = model.coef_[0].tolist()
+    return m, b, r_sq
 
 class BatchREINFORCEOffPolicy:
     def __init__(self, env, policy, baseline,
@@ -28,7 +105,9 @@ class BatchREINFORCEOffPolicy:
                 fit_off_policy=True,
                 fit_on_policy=False,
                 update_epochs=1,
-                batch_size=64):
+                batch_size=64,
+                fit_iter_fn=None,
+                drop_mode=ReplayBuffer.DROP_MODE_OLDEST):
 
         self.env = env
         self.policy = policy
@@ -37,12 +116,13 @@ class BatchREINFORCEOffPolicy:
         self.seed = seed
         self.save_logs = save_logs
         self.running_score = None
-        self.replay_buffer = {}
+        self.replay_buffer = ReplayBuffer(max_dataset_size=max_dataset_size, drop_mode=drop_mode)
         self.max_dataset_size = max_dataset_size
         self.fit_off_policy = fit_off_policy
         self.fit_on_policy = fit_on_policy
         self.update_epochs = update_epochs
         self.batch_size = batch_size
+        self.fit_iter_fn = fit_iter_fn
         if save_logs: self.logger = DataLog()
 
     def CPI_surrogate(self, observations, actions, advantages):
@@ -72,7 +152,8 @@ class BatchREINFORCEOffPolicy:
                     T=1e6,
                     gamma=0.995,
                     gae_lambda=0.98,
-                    num_cpu='max'):
+                    num_cpu='max',
+                    i=0):
         
         # Clean up input arguments
         if env_name is None: env_name = self.env.env_id
@@ -102,58 +183,66 @@ class BatchREINFORCEOffPolicy:
         # train from paths
 
         # train from replay buffer
-        self.update_replay_buffer(paths)
+        self.replay_buffer.update(paths)
         if self.save_logs:
             ts = timer.time()
             # TODO combine error after? throwing away rn
             if self.fit_on_policy:
                 error_before, error_after = self.baseline.fit(paths, return_errors=True)
             if self.fit_off_policy:
-                error_before, error_after = self.baseline.fit_off_policy(self.replay_buffer, self.policy, gamma, return_errors=True)
+                pred_1, mc_1 = evaluate_n_step(1, gamma, paths, self.baseline)
+                pred_start_end, mc_start_end = evaluate_start_end(gamma, paths, self.baseline)
+                m_1, b_1, r_sq_1 = line_fit(pred_1, mc_1)
+                m_end, b_end, r_sq_end = line_fit(pred_start_end, mc_start_end)
+                self.logger.log_kv('MSE_1_before', mse(pred_1, mc_1))
+                self.logger.log_kv('MSE_end_before', mse(pred_start_end, mc_start_end))
+                self.logger.log_kv('m_1_before', m_1)
+                self.logger.log_kv('b_1_before', b_1)
+                self.logger.log_kv('r_sq_1_before', r_sq_1)
+                self.logger.log_kv('m_end_before', m_end)
+                self.logger.log_kv('b_end_before', b_end)
+                self.logger.log_kv('r_sq_end_before', r_sq_end)
+
+                if self.fit_iter_fn is not None:
+                    self.baseline.fit_iters = self.fit_iter_fn(i)
+                error_before, error_after = self.baseline.fit_off_policy_many(self.replay_buffer, self.policy, gamma)
+                self.logger.log_kv('fit_iters', self.baseline.fit_iters)
+                
+                pred_1, mc_1 = evaluate_n_step(1, gamma, paths, self.baseline)
+                pred_start_end, mc_start_end = evaluate_start_end(gamma, paths, self.baseline)
+                m_1, b_1, r_sq_1 = line_fit(pred_1, mc_1)
+                m_end, b_end, r_sq_end = line_fit(pred_start_end, mc_start_end)
+                self.logger.log_kv('MSE_1_after', mse(pred_1, mc_1))
+                self.logger.log_kv('MSE_end_after', mse(pred_start_end, mc_start_end))
+                self.logger.log_kv('m_1_after', m_1)
+                self.logger.log_kv('b_1_after', b_1)
+                self.logger.log_kv('r_sq_1_after', r_sq_1)
+                self.logger.log_kv('m_end_after', m_end)
+                self.logger.log_kv('b_end_after', b_end)
+                self.logger.log_kv('r_sq_end_after', r_sq_end)
+
+            self.logger.log_kv('rb_num_terminal', np.sum(self.replay_buffer['is_terminal']))
+            self.logger.log_kv('rb_oldest', np.min(self.replay_buffer['iterations']))
+            self.logger.log_kv('rb_newest', np.max(self.replay_buffer['iterations']))
+            self.logger.log_kv('rb_avg_age', np.mean(self.replay_buffer['iterations']))
+
             self.logger.log_kv('time_VF', timer.time()-ts)
             self.logger.log_kv('VF_error_before', error_before)
             self.logger.log_kv('VF_error_after', error_after)
             self.logger.log_kv('dataset_size', len(self.replay_buffer['observations']))
             self.logger.log_kv('t', self.replay_buffer['t'])
+
         else:
             if self.fit_on_policy:
                 self.baseline.fit(paths)
             if self.fit_off_policy:
-                self.baseline.fit_off_policy(self.replay_buffer, self.policy, gamma)
+                self.baseline.fit_off_policy_many(self.replay_buffer, self.policy, gamma)
 
         eval_statistics = self.train_from_replay_buffer(paths)
         eval_statistics.append(N)
 
         return eval_statistics
 
-    def update_replay_buffer(self, paths):
-        observations = np.concatenate([path["observations"] for path in paths])
-        actions = np.concatenate([path["actions"] for path in paths])
-        rewards = np.concatenate([path["rewards"] for path in paths])
-        l = observations.shape[0] - 1
-        if 'observations' not in self.replay_buffer:
-            self.replay_buffer['observations'] = observations[:-1]
-            self.replay_buffer['observations_prime'] = observations[1:]
-            self.replay_buffer['actions'] = actions[:-1]
-            self.replay_buffer['rewards'] = rewards[:-1]
-            self.replay_buffer['last_update'] = np.zeros(l)
-            self.replay_buffer['t'] = 0
-        else:
-            self.replay_buffer['t'] += 1
-            self.replay_buffer['observations'] = np.concatenate([self.replay_buffer['observations'], observations[:-1]])
-            self.replay_buffer['observations_prime'] = np.concatenate([self.replay_buffer['observations_prime'], observations[1:]])
-            self.replay_buffer['actions'] = np.concatenate([self.replay_buffer['actions'], actions[:-1]])
-            self.replay_buffer['rewards'] = np.concatenate([self.replay_buffer['rewards'], rewards[:-1]])
-            self.replay_buffer['last_update'] = np.concatenate([self.replay_buffer['last_update'], np.ones(l) * self.replay_buffer['t']])
-        
-                
-        if self.max_dataset_size > 0 and len(self.replay_buffer['observations']) > self.max_dataset_size:
-            self.replay_buffer['observations'] = self.replay_buffer['observations'][-self.max_dataset_size:, :]
-            self.replay_buffer['observations_prime'] = self.replay_buffer['observations_prime'][-self.max_dataset_size:, :]
-            self.replay_buffer['actions'] = self.replay_buffer['actions'][-self.max_dataset_size:, :]
-            self.replay_buffer['rewards'] = self.replay_buffer['rewards'][-self.max_dataset_size:]
-            self.replay_buffer['last_update'] = self.replay_buffer['last_update'][-self.max_dataset_size:]
-            
     # TODO will calling this multiple times screw things up?
     def update_policy(self, observations, actions, weights, paths):
         t_gLL = 0.0
@@ -200,6 +289,8 @@ class BatchREINFORCEOffPolicy:
         actions = self.policy.get_action_batch(observations)
 
         predictions = self.baseline.predict({'observations': observations, 'actions': actions})
+
+        print(predictions)
 
         self.update_policy(observations, actions, predictions, paths)
 
