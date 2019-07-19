@@ -136,7 +136,14 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
         
         observations = self.replay_buffer['observations']
         actions = self.policy.get_action_batch(observations)
-        predictions = self.baseline.predict({'observations': observations, 'actions': actions})
+        predictions = self.baseline.predict(
+            {
+                'observations': observations,
+                'actions': actions,
+                'times': self.replay_buffer['times'],
+                'traj_length': self.replay_buffer['traj_length']
+            }
+        )
         
         if self.save_logs:
             self.logger.log_kv('Q_mean', np.mean(predictions))

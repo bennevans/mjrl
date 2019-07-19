@@ -241,6 +241,9 @@ class BatchREINFORCEOffPolicy:
         eval_statistics = self.train_from_replay_buffer(paths)
         eval_statistics.append(N)
 
+        if self.save_logs:
+            self.log_rollout_statistics(paths)
+
         return eval_statistics
 
     # TODO will calling this multiple times screw things up?
@@ -339,3 +342,6 @@ class BatchREINFORCEOffPolicy:
         self.logger.log_kv('stoc_pol_std', std_return)
         self.logger.log_kv('stoc_pol_max', max_return)
         self.logger.log_kv('stoc_pol_min', min_return)
+
+        self.running_score = mean_return if self.running_score is None else \
+                            0.9*self.running_score + 0.1*mean_return
