@@ -88,5 +88,29 @@ class ReplayBuffer():
     def __getitem__(self, key):
         return self.replay_buffer[key]
 
+    def sample(self, n):
+        """
+        returns n samples from the replay buffer at uniform random in dict form
+        """
+        cur_size = len(self.replay_buffer['observations'])
+        sample_idx = np.random.permutation(np.arange(cur_size))[:n]
+
+        # assert n < cur_size # TODO handle this case
+
+
+        return {
+            'observations': self['observations'][sample_idx],
+            'observations_prime': self['observations_prime'][sample_idx],
+            'actions': self['actions'][sample_idx],
+            'rewards': self['rewards'][sample_idx],
+            'last_update': self['last_update'][sample_idx],
+            'times': self['times'][sample_idx],
+            'is_terminal': self['is_terminal'][sample_idx],
+            'traj_length': self['traj_length'][sample_idx],
+            'iterations': self['iterations'][sample_idx],
+        }, min(cur_size, n)
+
+
+
     def __str__(self):
         return "length: {}\n{}".format(len(self.replay_buffer['observations']), str(self.replay_buffer))

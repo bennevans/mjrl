@@ -144,10 +144,29 @@ def plot_curves(experiment, param):
     plt.show()
 
 
+def print_stats(experiments, non_unique_params):
+    for exp in experiments:
+        stoc_pol_max = exp['stats']['stoc_pol_max']
+        eval_score = exp['stats']['eval_score']
+        MSE_end_after = exp['stats']['MSE_end_after']
+
+        param_names = []
+        params = []
+        for param in non_unique_params.keys():
+            param_names.append(param)
+            params.append(exp['params'][param])
+
+        for p1, p2 in zip(params, param_names):
+            print('{}: {}'.format(p2, p1), end=' ')
+        print()
+        print('\tstoc_pol_max: {}'.format(stoc_pol_max))
+        print('\teval_score: {}'.format(eval_score))
+        print('\tMSE_end_after: {}'.format(MSE_end_after))
+
 if __name__ == '__main__':
-    base_dir = './pg_exp/time_swimmer_dataset_size_0'
-    # base_dir = '/tmp/swimmer_dataset_fit_iter_0/'
-    # base_dir = '/tmp/swimmer_random_epochs_fit_iters_lr_size_0/'
+    # base_dir = './pg_exp/time_swimmer_dataset_size_0'
+    base_dir = './pg_exp/swimmer_dataset_fit_iter_0/'
+    # base_dir = './pg_exp/swimmer_random_epochs_fit_iters_lr_size_0/'
 
     STATS = [('MSE_end_after', True), ('eval_score', False), ('stoc_pol_max', False)]
 

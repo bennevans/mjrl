@@ -1,8 +1,7 @@
 from mjrl.utils.gym_env import GymEnv
 from mjrl.policies.gaussian_mlp import MLP
-from mjrl.baselines.quadratic_baseline import QuadraticBaseline
-from mjrl.baselines.mlp_baseline import MLPBaseline
-from mjrl.algos.npg_cg import NPG
+from mjrl.q_baselines.mlp_baseline import MLPBaseline
+from mjrl.algos.npg_cg_off_policy import NPGOffPolicy
 from mjrl.utils.train_agent import train_agent
 import mjrl.envs
 import time as timer
@@ -10,11 +9,14 @@ SEED = 500
 
 e = GymEnv('mjrl_point_mass-v0')
 policy = MLP(e.spec, hidden_sizes=(32,32), seed=SEED)
-baseline = QuadraticBaseline(e.spec)
-agent = NPG(e, policy, baseline, normalized_step_size=0.1, seed=SEED, save_logs=True)
+
+baseline = MLPBaseline(e.spec, fit_iters=50)
+
+agent = NPGOffPolicy(e, policy, baseline, normalized_step_size=0.1, seed=SEED, save_logs=True,
+    num_update_actions=10, num_update_states=256)
 
 ts = timer.time()
-train_agent(job_name='point_mass_exp1',
+train_agent(job_name='point_mass_off_policy_test',
             agent=agent,
             seed=SEED,
             niter=50,

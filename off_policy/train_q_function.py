@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import mjrl.envs
 import pickle
 
-mode = 'pm'
+mode = 'swimmer'
 
 def train_baseline(env, rb, policy, epochs, fit_iters, learn_rate,
     batch_size, hidden_sizes, gamma, return_error=False, use_time=False):
@@ -33,27 +33,32 @@ if __name__ == '__main__':
     elif mode == 'acrobot':
         policy_dir = 'acrobot_exp1/iterations/best_policy.pickle'
         e = GymEnv('mjrl_acrobot-v0')
+    elif mode == 'swimmer':
+        policy_dir = 'swimmer_testing/iterations/best_policy.pickle'
+        e = GymEnv('mjrl_swimmer-v0')
     else:
         raise Exception('bad mode: {}'.format(mode))
 
     policy = pickle.load(open(policy_dir, 'rb'))
-    rb = pickle.load(open('rb.pickle', 'rb'))
+    rb = pickle.load(open('replay_buf.pickle', 'rb'))
     paths = pickle.load(open('paths.pickle', 'rb'))
 
     learn_rate = 1e-4
     batch_size = 64
     epochs = 1
     hidden_sizes = [64, 64]
-    fit_iters = 250
+    fit_iters = 500
     gamma = 0.995
 
     baseline = train_baseline(e, rb, policy, epochs, fit_iters,
-        learn_rate, batch_size, hidden_sizes, gamma, use_time=True)
+        learn_rate, batch_size, hidden_sizes, gamma, use_time=False)
 
     if mode == 'pm':
         pickle.dump(baseline, open('baseline.pickle', 'wb'))
     elif mode == 'acrobot':
         pickle.dump(baseline, open('baseline_acro.pickle', 'wb'))
+    elif mode == 'swimmer':
+        pickle.dump(baseline, open('baseline_swimmer.pickle', 'wb'))
 
     # do some light evaluation right after training
     from evaluate_q_function import *

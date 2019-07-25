@@ -97,6 +97,7 @@ def line_fit(pred, mc):
     return m, b, r_sq
 
 class BatchREINFORCEOffPolicy:
+
     def __init__(self, env, policy, baseline,
                 max_dataset_size=-1,
                 learn_rate=0.01,
@@ -107,7 +108,11 @@ class BatchREINFORCEOffPolicy:
                 update_epochs=1,
                 batch_size=64,
                 fit_iter_fn=None,
-                drop_mode=ReplayBuffer.DROP_MODE_OLDEST):
+                drop_mode=ReplayBuffer.DROP_MODE_OLDEST,
+                pg_update_using_rb=True,
+                pg_update_using_advantage=True,
+                num_update_states=10,
+                num_update_actions=10):
 
         self.env = env
         self.policy = policy
@@ -123,6 +128,11 @@ class BatchREINFORCEOffPolicy:
         self.update_epochs = update_epochs
         self.batch_size = batch_size
         self.fit_iter_fn = fit_iter_fn
+        self.pg_update_using_rb = pg_update_using_rb
+        self.pg_update_using_advantage = pg_update_using_advantage
+        self.num_update_states = num_update_states
+        self.num_update_actions = num_update_actions
+
         if save_logs: self.logger = DataLog()
 
     def CPI_surrogate(self, observations, actions, advantages):
@@ -207,7 +217,8 @@ class BatchREINFORCEOffPolicy:
                     self.baseline.fit_iters = self.fit_iter_fn(i)
                 error_before, error_after = self.baseline.fit_off_policy_many(self.replay_buffer, self.policy, gamma)
                 self.logger.log_kv('fit_iters', self.baseline.fit_iters)
-                
+                self.logger.log_kv('fit_epochs', self.baseline.epochs)
+
                 pred_1, mc_1 = evaluate_n_step(1, gamma, paths, self.baseline)
                 pred_start_end, mc_start_end = evaluate_start_end(gamma, paths, self.baseline)
                 m_1, b_1, r_sq_1 = line_fit(pred_1, mc_1)
@@ -238,7 +249,8 @@ class BatchREINFORCEOffPolicy:
             if self.fit_off_policy:
                 self.baseline.fit_off_policy_many(self.replay_buffer, self.policy, gamma)
 
-        eval_statistics = self.train_from_replay_buffer(paths)
+        # eval_statistics = self.train_from_replay_buffer(paths)
+        eval_statistics = self.train(paths)
         eval_statistics.append(N)
 
         if self.save_logs:
@@ -284,6 +296,10 @@ class BatchREINFORCEOffPolicy:
                     self.logger.log_kv('success_rate', success_rate)
                 except:
                     pass
+
+    def train(self, paths):
+        raise Exception('not implemented')
+        return None
 
     def train_from_replay_buffer(self, paths):
         # TODO cache baseline and only update when necessary?

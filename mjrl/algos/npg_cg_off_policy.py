@@ -38,7 +38,11 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
                     epochs=1,
                     batch_size=256,
                     fit_iter_fn=None,
-                    drop_mode=ReplayBuffer.DROP_MODE_OLDEST):
+                    drop_mode=ReplayBuffer.DROP_MODE_OLDEST,
+                    pg_update_using_rb=True,
+                    pg_update_using_advantage=True,
+                    num_update_states=10,
+                    num_update_actions=10):
         """
         All inputs are expected in mjrl's format unless specified
         :param normalized_step_size: Normalized step size (under the KL metric). Twice the desired KL distance
@@ -50,7 +54,8 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
         """
         super().__init__(env, policy, baseline, max_dataset_size=max_dataset_size,
             fit_off_policy=fit_off_policy, fit_on_policy=fit_on_policy,
-            fit_iter_fn=fit_iter_fn, drop_mode=drop_mode)
+            fit_iter_fn=fit_iter_fn, drop_mode=drop_mode, pg_update_using_rb=pg_update_using_rb,
+            pg_update_using_advantage=pg_update_using_advantage, num_update_states=num_update_states, num_update_actions=num_update_actions)
         self.env = env
         self.policy = policy
         self.baseline = baseline
@@ -94,7 +99,7 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
             return Hvp
         return eval
     
-    def update_policy(self, observations, actions, weights, paths):
+    def update_policy(self, observations, actions, weights):
         t_gLL = 0.0
         t_FIM = 0.0
 
@@ -131,6 +136,87 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
 
         return alpha, n_step_size, t_gLL, t_FIM, new_params
 
+
+    def train(self, paths):
+        n = self.num_update_states # how many states to take from rb 
+        m = self.num_update_actions # how many actions per state
+
+        # TODO repeat this process k times?
+
+        if self.pg_update_using_rb:
+            samples, n = self.replay_buffer.sample(n) # TODO is it bad to reupdate n?
+
+            observations = np.tile(samples['observations'], (m, 1))
+            times = np.tile(samples['times'], (m, 1))
+            traj_length = np.tile(self.replay_buffer['traj_length'], (m, 1))
+            actions = self.policy.get_action_batch(observations)
+
+            Qs = self.baseline.predict(
+                {
+                'observations': observations,
+                'actions': actions,
+                'times': times,
+                'traj_length': traj_length
+                }
+            )
+
+            if self.save_logs:
+                self.logger.log_kv('Q_mean', np.mean(Qs))
+                self.logger.log_kv('Q_max', np.max(Qs))
+                self.logger.log_kv('Q_min', np.min(Qs))
+                self.logger.log_kv('Q_std', np.std(Qs))
+            
+            weights = np.copy(Qs)
+            # TODO do non-loop
+            if self.pg_update_using_advantage:
+                for i in range(n):
+                    observations[i::n]
+                    V = np.average(Qs[i::n])
+                    weights[i::n] -= V
+                
+                if self.save_logs:
+                    self.logger.log_kv('weights_mean', np.mean(weights))
+                    self.logger.log_kv('weights_max', np.max(weights))
+                    self.logger.log_kv('weights_min', np.min(weights))
+                    self.logger.log_kv('weights_std', np.std(weights))
+                    # TODO log vs?
+        else:
+            raise Exception('not implemented')
+
+        surr_before = self.CPI_surrogate(observations, actions, weights).data.numpy().ravel()[0]
+        alpha, n_step_size, t_gLL, t_FIM, new_params = self.update_policy(observations, actions, weights)
+        
+        surr_after = self.CPI_surrogate(observations, actions, weights).data.numpy().ravel()[0]
+        kl_dist = self.kl_old_new(observations, actions).data.numpy().ravel()[0]
+        self.policy.set_param_values(new_params, set_new=True, set_old=True)
+
+        # Log information
+        if self.save_logs:
+            self.logger.log_kv('alpha', alpha)
+            self.logger.log_kv('delta', n_step_size)
+            self.logger.log_kv('time_vpg', t_gLL)
+            self.logger.log_kv('time_npg', t_FIM)
+            self.logger.log_kv('kl_dist', kl_dist)
+            self.logger.log_kv('surr_improvement', surr_after - surr_before)
+            self.logger.log_kv('running_score', self.running_score)
+            try:
+                self.env.env.env.evaluate_success(paths, self.logger)
+            except:
+                # nested logic for backwards compatibility. TODO: clean this up.
+                try:
+                    success_rate = self.env.env.env.evaluate_success(paths)
+                    self.logger.log_kv('success_rate', success_rate)
+                except:
+                    pass
+
+        path_returns = [sum(p["rewards"]) for p in paths]
+        mean_return = np.mean(path_returns)
+        std_return = np.std(path_returns)
+        min_return = np.amin(path_returns)
+        max_return = np.amax(path_returns)
+        base_stats = [mean_return, std_return, min_return, max_return]
+
+        return base_stats
 
     def train_from_replay_buffer(self, paths):
         
@@ -169,13 +255,13 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
                     a_batch = actions[rand_idx, :]
                     p_batch = predictions[rand_idx]
                     
-                    alpha, n_step_size, t_gLL, t_FIM, new_params = self.update_policy(o_batch, a_batch, p_batch, paths)
+                    alpha, n_step_size, t_gLL, t_FIM, new_params = self.update_policy(o_batch, a_batch, p_batch)
         else:
             for ep in range(self.epochs):
                 if ep > 0:
                     actions = self.policy.get_action_batch(observations)
                     predictions = self.baseline.predict({'observations': observations, 'actions': actions})
-                alpha, n_step_size, t_gLL, t_FIM, new_params = self.update_policy(observations, actions, predictions, paths)
+                alpha, n_step_size, t_gLL, t_FIM, new_params = self.update_policy(observations, actions, predictions)
         
         surr_after = self.CPI_surrogate(observations, actions, predictions).data.numpy().ravel()[0]
         kl_dist = self.kl_old_new(observations, actions).data.numpy().ravel()[0]
