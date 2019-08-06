@@ -6,6 +6,7 @@ import json
 import itertools
 import inspect
 import copy
+import socket
 import mjrl.envs
 
 import numpy as np
@@ -22,7 +23,7 @@ import mjrl.q_baselines.mlp_baseline as qmlp
 import mjrl.baselines.mlp_baseline as mlp
 
 
-SEED = 0x5EED
+BASE_SEED = 0x5EED
 
 def get_param_list(possible_params):
     keys = []
@@ -61,7 +62,7 @@ def sanatize(params):
     return ret
 
 
-def run_exp(params, env_name, job_name):
+def run_exp(params, env_name, job_name, i):
     epochs = params['baseline_epochs']
     fit_iters = params['baseline_fit_iters']
     fit_iter_fn = params['baseline_fit_iter_fn']
@@ -75,6 +76,9 @@ def run_exp(params, env_name, job_name):
     max_dataset_size = params['agent_max_dataset_size']
     drop_mode = params['agent_drop_mode']
 
+    num_update_actions = params['agent_num_update_actions']
+    num_update_states = params['agent_num_update_states']
+
     policy_hidden_size = params['policy_hidden_size']
 
     niter = params['niter']
@@ -87,7 +91,7 @@ def run_exp(params, env_name, job_name):
 
     e = GymEnv(env_name)
 
-    policy = MLP(e.spec, hidden_sizes=policy_hidden_size, seed=SEED)
+    policy = MLP(e.spec, hidden_sizes=policy_hidden_size, seed=BASE_SEED+i)
 
     if off_policy:
 
@@ -96,15 +100,15 @@ def run_exp(params, env_name, job_name):
             use_time=use_time)
 
         agent = NPGOffPolicy(e, policy, baseline, normalized_step_size=normalized_step_size,
-            seed=SEED, save_logs=True, fit_iter_fn=fit_iter_fn, max_dataset_size=max_dataset_size,
-            drop_mode=drop_mode)
+            seed=BASE_SEED+i+1, save_logs=True, fit_iter_fn=fit_iter_fn, max_dataset_size=max_dataset_size,
+            drop_mode=drop_mode, num_update_actions=num_update_actions, num_update_states=num_update_states)
 
     else:
         baseline = mlp.MLPBaseline(e.spec, learn_rate=lr, batch_size=batch_size,
             epochs=epochs)
         
         agent = NPG(e, policy, baseline, normalized_step_size=normalized_step_size,
-            seed=SEED, save_logs=True)
+            seed=BASE_SEED+i+2, save_logs=True)
 
     os.mkdir(job_name)
     param_file = os.path.join(job_name, 'params.json')
@@ -114,7 +118,7 @@ def run_exp(params, env_name, job_name):
 
     train_agent(job_name=job_name,
         agent=agent,
-        seed=SEED,
+        seed=BASE_SEED+i+3,
         niter=niter,
         gamma=gamma,
         gae_lambda=gae_lambda,
@@ -139,7 +143,7 @@ def run_exp_many(params, env_name, n, exp_dir):
     for i in range(n):
         run_dir = os.path.join(exp_dir, 'run_{}'.format(i))
         print('run_dir', run_dir)
-        run_exp(params, env_name, run_dir)
+        run_exp(params, env_name, run_dir, i)
 
 def enumerate_run_save(param_list, base_dir, env_name, n):
 
@@ -175,6 +179,8 @@ def get_params(**kwargs):
         'agent_normalized_step_size': 0.1,
         'agent_drop_mode': ReplayBuffer.DROP_MODE_RANDOM,
         'agent_max_dataset_size': 100000,
+        'agent_num_update_actions': 10,
+        'agent_num_update_states': 256,
         'policy_hidden_size': (32, 32), 
 
         'niter': 150,
@@ -216,8 +222,8 @@ def generate_param_list_random(n):
     # if there is one argument, use it
     # else, define (low, high, logscale)
     param_limits = {
-        'baseline_epochs': [1, 5, False],
-        'baseline_fit_iters': [10, 1000, True],
+        'baseline_epochs': [1, 3, False],
+        'baseline_fit_iters': [25, 250, True],
         'baseline_fit_iter_fn': [None],
         'baseline_batch_size': [64],
         'baseline_hidden_size': [(64, 64)],
@@ -225,16 +231,18 @@ def generate_param_list_random(n):
         'baseline_use_time': [False],
         'baseline_off_policy': [True],
 
-        'agent_normalized_step_size': [0.1],
+        'agent_normalized_step_size': [0.01, 0.5, True],
         'agent_drop_mode': [ReplayBuffer.DROP_MODE_RANDOM],
         'agent_max_dataset_size': [1000, 100000, True],
+        'agent_num_update_actions': [2, 128, True],
+        'agent_num_update_states': [16, 10000, True],
         'policy_hidden_size': [(32, 32)], 
 
-        'niter': [150],
+        'niter': [100],
         'gamma': [0.995],
         'gae_lambda': [0.97],
         'num_cpu': [6],
-        'num_traj': [5],
+        'num_traj': [16],
         'save_freq': [5],
         'evaluation_rollouts': [10]
     }
@@ -262,36 +270,44 @@ possible_params = {
     'baseline_fit_iter_fn': [None],
     'baseline_batch_size': [64],
     'baseline_hidden_size': [(64, 64)],
-    'baseline_lr': [1e-4],
+    'baseline_lr': [1e-3],
     'baseline_use_time': [False],
     'baseline_off_policy': [True],
 
-    'agent_normalized_step_size': [0.1],
+    'agent_normalized_step_size': [0.01, 0.05, 0.1, 0.2, 0.5],
     'agent_drop_mode': [ReplayBuffer.DROP_MODE_RANDOM],
-    'agent_max_dataset_size': [50000],
+    'agent_max_dataset_size': [30000],
+    'agent_num_update_actions': [6],
+    'agent_num_update_states': [256],
     'policy_hidden_size': [(32, 32)], 
 
-    'niter': [150],
+    'niter': [100],
     'gamma': [0.995],
     'gae_lambda': [0.97],
     'num_cpu': [6],
-    'num_traj': [5],
+    'num_traj': [20],
     'save_freq': [5],
     'evaluation_rollouts': [10]
 }
 
 if __name__ == '__main__':
 
-    env_name = 'mjrl_swimmer-v0'
-    base_dir = 'pg_exp/swimmer_random_epochs_fit_iters_lr_size_0/'
+    env_name = 'mjrl_hopper-v0'
+    base_dir = 'pg_exp/hopper_step_size_off_policy_0/'
+    machine = 'ben-mcl'
+
+    hostname = socket.gethostname()
+    if machine != hostname:
+        print('mismatching hostnames! expected: {} given: {}'.format(machine, hostname))
+        exit()
 
     n = 3
 
     start_time = time.time()
 
-    # param_list = generate_param_list_combinatorial(possible_params)
+    param_list = generate_param_list_combinatorial(possible_params)
     # param_list = generate_param_list_fixed()
-    param_list = generate_param_list_random(10)
+    # param_list = generate_param_list_random(10)
 
     for param in param_list:
         print('param:\n', param)
@@ -304,7 +320,9 @@ if __name__ == '__main__':
         'n': n,
         'base_dir': base_dir,
         'param_list': sanatize_param_list(param_list),
-        'env_name': env_name
+        'env_name': env_name,
+        'base_seed': BASE_SEED,
+        'machine': machine
     }
 
     metadata['total_time'] = metadata['end_time'] - metadata['start_time']

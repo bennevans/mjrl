@@ -113,11 +113,13 @@ stoc_pol_mean.png
 results.txt
 MUJOCO_LOG.TXT
 
+*.json
+
 experiments/
 off_policy/q_exps/
 off_policy/q_exps_no_time/
 
-off_policy/pg_exp/
+off_policy/pg_exp*/
 
 off_policy/train_npg_*.py
 tests/vis.py

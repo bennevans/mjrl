@@ -11,6 +11,12 @@ register(
 )
 
 register(
+    id='mjrl_hard_point_mass-v0',
+    entry_point='mjrl.envs:HardPointMassEnv',
+    max_episode_steps=250,
+)
+
+register(
     id='mjrl_swimmer-v0',
     entry_point='mjrl.envs:SwimmerEnv',
     max_episode_steps=500,
@@ -23,9 +29,31 @@ register(
     max_episode_steps=400,
 )
 
+register(
+    id='mjrl_bike-v0',
+    entry_point="mjrl.envs:BikeEnv",
+    max_episode_steps=1500,
+)
+
+register(
+    id='mjrl_hopper_height-v0',
+    entry_point="mjrl.envs:HopperHeightEnv",
+    max_episode_steps=400,
+)
+
+register(
+    id='mjrl_hopper-v0',
+    entry_point="mjrl.envs:HopperEnv",
+    max_episode_steps=1000,
+    reward_threshold=3800.0,
+)
+
 from mjrl.envs.mujoco_env import MujocoEnv
 # ^^^^^ so that user gets the correct error
 # message if mujoco is not installed correctly
 from mjrl.envs.point_mass import PointMassEnv
+from mjrl.envs.hard_point_mass import HardPointMassEnv
 from mjrl.envs.swimmer import SwimmerEnv
 from mjrl.envs.acrobot import AcrobotEnv
+from mjrl.envs.bike import BikeEnv
+from mjrl.envs.hopper import HopperEnv

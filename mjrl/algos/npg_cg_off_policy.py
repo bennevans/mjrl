@@ -145,10 +145,9 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
 
         if self.pg_update_using_rb:
             samples, n = self.replay_buffer.sample(n) # TODO is it bad to reupdate n?
-
             observations = np.tile(samples['observations'], (m, 1))
-            times = np.tile(samples['times'], (m, 1))
-            traj_length = np.tile(self.replay_buffer['traj_length'], (m, 1))
+            times = np.tile(samples['times'], (m))
+            traj_length = np.tile(samples['traj_length'], (m))
             actions = self.policy.get_action_batch(observations)
 
             Qs = self.baseline.predict(

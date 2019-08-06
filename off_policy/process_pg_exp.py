@@ -148,7 +148,11 @@ def print_stats(experiments, non_unique_params):
     for exp in experiments:
         stoc_pol_max = exp['stats']['stoc_pol_max']
         eval_score = exp['stats']['eval_score']
-        MSE_end_after = exp['stats']['MSE_end_after']
+        
+        if 'MSE_end_after' in exp['stats']:
+            MSE_end_after = exp['stats']['MSE_end_after']
+        else:
+            MSE_end_after = -1
 
         param_names = []
         params = []
@@ -163,13 +167,7 @@ def print_stats(experiments, non_unique_params):
         print('\teval_score: {}'.format(eval_score))
         print('\tMSE_end_after: {}'.format(MSE_end_after))
 
-if __name__ == '__main__':
-    # base_dir = './pg_exp/time_swimmer_dataset_size_0'
-    base_dir = './pg_exp/swimmer_dataset_fit_iter_0/'
-    # base_dir = './pg_exp/swimmer_random_epochs_fit_iters_lr_size_0/'
-
-    STATS = [('MSE_end_after', True), ('eval_score', False), ('stoc_pol_max', False)]
-
+def get_experiments(base_dir, STATS):
     sub_dirs = [f for f in os.listdir(base_dir) if os.path.isdir(os.path.join(base_dir, f))]
 
     experiments = []
@@ -208,6 +206,21 @@ if __name__ == '__main__':
         }
 
         experiments.append(exp)
+    return experiments
+
+if __name__ == '__main__':
+    # base_dir = './pg_exp/hopper_step_size_0'
+    base_dir = './pg_exp/hopper_step_size_off_policy_0'
+
+    STATS = [('eval_score', False), ('stoc_pol_max', False)]
+    # STATS = [('MSE_end_after', True), ('eval_score', False), ('stoc_pol_max', False)]
+
+    print('base_dir:', base_dir)
+
+    experiments = get_experiments(base_dir, STATS)
 
     non_unique_params = get_non_unique(experiments)
+    
+    print(non_unique_params)
         
+    print_stats(experiments, non_unique_params)

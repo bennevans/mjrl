@@ -97,7 +97,6 @@ def line_fit(pred, mc):
     return m, b, r_sq
 
 class BatchREINFORCEOffPolicy:
-
     def __init__(self, env, policy, baseline,
                 max_dataset_size=-1,
                 learn_rate=0.01,
@@ -163,7 +162,7 @@ class BatchREINFORCEOffPolicy:
                     gamma=0.995,
                     gae_lambda=0.98,
                     num_cpu='max',
-                    i=0):
+                    i=None):
         
         # Clean up input arguments
         if env_name is None: env_name = self.env.env_id
@@ -214,6 +213,8 @@ class BatchREINFORCEOffPolicy:
                 self.logger.log_kv('r_sq_end_before', r_sq_end)
 
                 if self.fit_iter_fn is not None:
+                    if i is None:
+                        raise Exception('must set include_i=True in train_agent')
                     self.baseline.fit_iters = self.fit_iter_fn(i)
                 error_before, error_after = self.baseline.fit_off_policy_many(self.replay_buffer, self.policy, gamma)
                 self.logger.log_kv('fit_iters', self.baseline.fit_iters)
