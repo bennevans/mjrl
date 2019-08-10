@@ -60,7 +60,7 @@ def get_csv(results):
 
 
 if __name__ == '__main__':
-    base_dir = './q_exps/acro_testing'
+    base_dir = './q_exps/acro_sizes_0'
     data_dir = os.path.join(base_dir, 'results.json')
     output_dir = os.path.join(base_dir, 'results.csv')
 

@@ -30,10 +30,11 @@ class AcrobotEnv(mujoco_env.MujocoEnv, utils.EzPickle):
             reward += 1.0
 
             # success_vel_pen = 1e-2 * np.abs(self.data.qvel[0])
-            success_vel_pen = 1e-1 * np.linalg.norm(self.data.qvel)
-
-            reward -= success_vel_pen
-
+            success_vel_pen = 5e-1 * np.linalg.norm(self.data.qvel)
+            
+            if tip_height > 1.95:
+                reward += 2.0
+                reward -= success_vel_pen
             # ctrl_cost = 1e-4 * np.square(a).sum()
             # reward -= ctrl_cost
         

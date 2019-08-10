@@ -82,10 +82,12 @@ def line_fit(pred, mc):
     return m, b, r_sq
 
 if __name__ == '__main__':
-    baseline_file = 'baseline_acro.pickle'
+    baseline_file = 'baseline.pickle'
     baseline = pickle.load(open(baseline_file, 'rb'))
 
-    paths = pickle.load(open('paths.pickle', 'rb'))
+    # paths = pickle.load(open('paths.pickle', 'rb'))
+    paths = pickle.load(open('paths_test.pickle', 'rb'))
+
 
     gamma = 0.995
 
