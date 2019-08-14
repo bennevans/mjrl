@@ -114,8 +114,6 @@ class MLPBaseline:
 
     def fit_off_policy_many(self, replay_buffer, policy, gamma):
         eb = -1
-        print('fit_off_policy_many')
-        print(self.fit_iters)
         first_model = copy.deepcopy(self.model)
         for j in range(self.fit_iters):
             self.model_old = copy.deepcopy(self.model)

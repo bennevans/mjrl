@@ -107,7 +107,30 @@ def scatter_run_stats(experiments, k1, k2, color_key):
     plt.legend()
     plt.show()
 
-def examine_run_stat(experiments, param, stat):
+def bar_run_stat(experiments, param, stat):
+    data = {}
+    for exp in experiments:
+        param_val = exp['params'][param]
+        stat_val = exp['run_stats'][stat]
+        k = str(param_val)
+        if k in data:
+            data[k].append(stat_val)
+        else:
+            data[k] = [stat_val]
+    
+    ind = np.arange(len(data))
+    keys = []
+    vals = []
+    for k in data:
+        avg = np.mean(data[k])
+        keys.append(k)
+        vals.append(avg)
+
+    plt.bar(ind, vals)
+    plt.xticks(ind, keys)
+    plt.show()
+    
+def examine_run_stat(experiments, param, stat, lin_reg=False):
     
     xs = []
     ys = []
@@ -116,22 +139,24 @@ def examine_run_stat(experiments, param, stat):
         xs += [exp['params'][param]] * n
         ys += exp['run_stats'][stat]
 
-    lin_reg = LinearRegression()
-    lin_reg.fit(np.expand_dims(np.array(xs), 1), ys)
-    
-    pltxs = np.linspace(np.min(xs), np.max(xs))
-    pltys = lin_reg.predict(np.expand_dims(np.array(pltxs), 1))
+    if lin_reg:
+        lin_reg = LinearRegression()
+        lin_reg.fit(np.expand_dims(np.array(xs), 1), ys)
+        
+        pltxs = np.linspace(np.min(xs), np.max(xs))
+        pltys = lin_reg.predict(np.expand_dims(np.array(pltxs), 1))
 
-    m = lin_reg.coef_[0]
-    b = lin_reg.intercept_
-    r_sq = lin_reg.score(np.expand_dims(np.array(xs), 1), ys)
+        m = lin_reg.coef_[0]
+        b = lin_reg.intercept_
+        r_sq = lin_reg.score(np.expand_dims(np.array(xs), 1), ys)
 
-    print(m, b, r_sq)
+        print(m, b, r_sq)
 
     plt.xlabel(param)
     plt.ylabel(stat)
     plt.scatter(xs, ys)
-    plt.plot(pltxs, pltys)
+    if lin_reg:
+        plt.plot(pltxs, pltys)
     plt.show()
 
 def plot_curves(experiment, param):
@@ -210,7 +235,7 @@ def get_experiments(base_dir, STATS):
 
 if __name__ == '__main__':
     # base_dir = './pg_exp/hopper_step_size_0'
-    base_dir = './pg_exp/hopper_step_size_off_policy_0'
+    base_dir = './pg_exp/reacher_npg_baseline_1'
 
     STATS = [('eval_score', False), ('stoc_pol_max', False)]
     # STATS = [('MSE_end_after', True), ('eval_score', False), ('stoc_pol_max', False)]

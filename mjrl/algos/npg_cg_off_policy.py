@@ -42,7 +42,8 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
                     pg_update_using_advantage=True,
                     num_update_states=10,
                     num_update_actions=10,
-                    num_policy_updates=1):
+                    num_policy_updates=1,
+                    normalize_advanages=True):
         """
         All inputs are expected in mjrl's format unless specified
         :param normalized_step_size: Normalized step size (under the KL metric). Twice the desired KL distance
@@ -56,7 +57,7 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
             fit_off_policy=fit_off_policy, fit_on_policy=fit_on_policy,
             fit_iter_fn=fit_iter_fn, drop_mode=drop_mode, pg_update_using_rb=pg_update_using_rb,
             pg_update_using_advantage=pg_update_using_advantage, num_update_states=num_update_states,
-            num_update_actions=num_update_actions, num_policy_updates=num_policy_updates)
+            num_update_actions=num_update_actions, num_policy_updates=num_policy_updates, normalize_advanages=normalize_advanages)
         self.env = env
         self.policy = policy
         self.baseline = baseline
@@ -167,6 +168,9 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
                 self.logger.log_kv('Q_std', np.std(Qs))
             
             weights = np.copy(Qs)
+
+            
+
             # TODO do non-loop
             if self.pg_update_using_advantage:
                 for i in range(n):
@@ -174,6 +178,9 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
                     V = np.average(Qs[i::n])
                     weights[i::n] -= V
                 
+                if self.normalize_advanages:
+                    weights = (weights - np.mean(weights)) / (np.std(weights) + 1e-6)
+
                 if self.save_logs:
                     self.logger.log_kv('weights_mean', np.mean(weights))
                     self.logger.log_kv('weights_max', np.max(weights))

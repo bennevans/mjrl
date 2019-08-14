@@ -78,6 +78,8 @@ def run_exp(params, env_name, job_name, i):
 
     num_update_actions = params['agent_num_update_actions']
     num_update_states = params['agent_num_update_states']
+    num_policy_updates = params['num_policy_updates']
+    normalize_advangates = params['normalize_advantages']
 
     policy_hidden_size = params['policy_hidden_size']
 
@@ -101,7 +103,8 @@ def run_exp(params, env_name, job_name, i):
 
         agent = NPGOffPolicy(e, policy, baseline, normalized_step_size=normalized_step_size,
             seed=BASE_SEED+i+1, save_logs=True, fit_iter_fn=fit_iter_fn, max_dataset_size=max_dataset_size,
-            drop_mode=drop_mode, num_update_actions=num_update_actions, num_update_states=num_update_states)
+            drop_mode=drop_mode, num_update_actions=num_update_actions, num_update_states=num_update_states,
+            num_policy_updates=num_policy_updates, normalize_advanages=normalize_advanages)
 
     else:
         baseline = mlp.MLPBaseline(e.spec, learn_rate=lr, batch_size=batch_size,
@@ -222,27 +225,29 @@ def generate_param_list_random(n):
     # if there is one argument, use it
     # else, define (low, high, logscale)
     param_limits = {
-        'baseline_epochs': [1, 3, False],
-        'baseline_fit_iters': [25, 250, True],
+        'baseline_epochs': [1, 2, False],
+        'baseline_fit_iters': [25, 100, True],
         'baseline_fit_iter_fn': [None],
         'baseline_batch_size': [64],
         'baseline_hidden_size': [(64, 64)],
-        'baseline_lr': [1e-5, 1e-3, True],
-        'baseline_use_time': [False],
+        'baseline_lr': [1e-4, 1e-2, True],
+        'baseline_use_time': [True, False],
         'baseline_off_policy': [True],
 
-        'agent_normalized_step_size': [0.01, 0.5, True],
+        'agent_normalized_step_size': [0.05, 0.2, True],
         'agent_drop_mode': [ReplayBuffer.DROP_MODE_RANDOM],
-        'agent_max_dataset_size': [1000, 100000, True],
-        'agent_num_update_actions': [2, 128, True],
-        'agent_num_update_states': [16, 10000, True],
-        'policy_hidden_size': [(32, 32)], 
+        'agent_max_dataset_size': [100, 2500, True],
+        'agent_num_update_actions': [10],
+        'agent_num_update_states': [256],
+        'num_policy_updates': [1, 8, True],
+        'normalize_advanages': [True]
+        'policy_hidden_size': [(32, 32), (64, 64), (128,128)], 
 
         'niter': [100],
-        'gamma': [0.995],
+        'gamma': [0.996667],
         'gae_lambda': [0.97],
-        'num_cpu': [6],
-        'num_traj': [16],
+        'num_cpu': [12],
+        'num_traj': [15],
         'save_freq': [5],
         'evaluation_rollouts': [10]
     }
@@ -253,13 +258,15 @@ def generate_param_list_random(n):
         for k,v in param_limits.items():
             if len(v) == 1:
                 param[k] = v[0]
-            elif len(v) == 3:
+            elif len(v) == 3 and type(v[2]) is bool:
                 if v[2]:
                     param[k] = log_sample(v[0], v[1])
                 else:
                     param[k] = sample(v[0], v[1])
             else:
-                raise Exception('bad param limits')
+                print('warning: sampling uniformly for param: {}'.format(k))
+                idx = np.random.randint(len(v))
+                param[k] = v[idx]
         param_list.append(param)
     return param_list
 
@@ -274,26 +281,30 @@ possible_params = {
     'baseline_use_time': [False],
     'baseline_off_policy': [True],
 
-    'agent_normalized_step_size': [0.01, 0.05, 0.1, 0.2, 0.5],
+    'agent_normalized_step_size': [0.1],
     'agent_drop_mode': [ReplayBuffer.DROP_MODE_RANDOM],
-    'agent_max_dataset_size': [30000],
-    'agent_num_update_actions': [6],
+    'agent_max_dataset_size': [2500],
+    'agent_num_update_actions': [10],
     'agent_num_update_states': [256],
+    'num_policy_updates': [1, 2, 4],
+    'normalize_advanages': [True]
     'policy_hidden_size': [(32, 32)], 
 
     'niter': [100],
-    'gamma': [0.995],
+    'gamma': [0.996667],
     'gae_lambda': [0.97],
-    'num_cpu': [6],
-    'num_traj': [20],
+    'num_cpu': [12],
+    'num_traj': [50],
     'save_freq': [5],
     'evaluation_rollouts': [10]
 }
 
 if __name__ == '__main__':
 
-    env_name = 'mjrl_hopper-v0'
-    base_dir = 'pg_exp/hopper_step_size_off_policy_0/'
+    env_name = 'mjrl_reacher-v0'
+    base_dir = 'pg_exp/reacher_num_policy_updates_1/'
+    # machine = 'voltron'
+    # base_dir = 'pg_exp/reacher_npg_baseline_1/'
     machine = 'ben-mcl'
 
     hostname = socket.gethostname()
@@ -307,7 +318,7 @@ if __name__ == '__main__':
 
     param_list = generate_param_list_combinatorial(possible_params)
     # param_list = generate_param_list_fixed()
-    # param_list = generate_param_list_random(10)
+    # param_list = generate_param_list_random(16)
 
     for param in param_list:
         print('param:\n', param)

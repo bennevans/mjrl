@@ -38,7 +38,7 @@ def train_agent(job_name, agent,
     mean_pol_perf = 0.0
     e = GymEnv(agent.env.env_id)
 
-    total_env_interacts = 0
+    total_trajectories = 0
 
     for i in range(niter):
         print("......................................................................................")
@@ -57,10 +57,11 @@ def train_agent(job_name, agent,
         stats = agent.train_step(**args)
         train_curve[i] = stats[0]
 
-        total_env_interacts += N * e.horizon # logic could be wrong for non 'trajectories' sample mode
+        total_trajectories += N # logic could be wrong for non 'trajectories' sample mode
 
         if agent.save_logs:
-            agent.logger.log_kv('total_env_interacts', total_env_interacts)
+            agent.logger.log_kv('total_env_interacts', total_trajectories * e.horizon)
+            agent.logger.log_kv('total_trajectories', total_trajectories)
 
         if evaluation_rollouts is not None and evaluation_rollouts > 0:
             print("Performing evaluation rollouts ........")

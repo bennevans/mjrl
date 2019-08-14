@@ -90,12 +90,15 @@ def line_fit(pred, mc):
     X = np.array(pred).reshape((-1,1))
     y = np.array(mc)
     model = LinearRegression()
-    model.fit(X, y)
-    r_sq = model.score(X, y)
-    b = model.intercept_.tolist()
-    m = model.coef_[0].tolist()
-    return m, b, r_sq
-
+    try:
+        model.fit(X, y)
+        r_sq = model.score(X, y)
+        b = model.intercept_.tolist()
+        m = model.coef_[0].tolist()
+        return m, b, r_sq
+    except Exception as e:
+        print(str(e))
+        return 0, 0, -1
 class BatchREINFORCEOffPolicy:
     def __init__(self, env, policy, baseline,
                 max_dataset_size=-1,
@@ -112,7 +115,8 @@ class BatchREINFORCEOffPolicy:
                 pg_update_using_advantage=True,
                 num_update_states=10,
                 num_update_actions=10,
-                num_policy_updates=1):
+                num_policy_updates=1,
+                normalize_advanages=True):
 
         self.env = env
         self.policy = policy
@@ -133,6 +137,7 @@ class BatchREINFORCEOffPolicy:
         self.num_update_states = num_update_states
         self.num_update_actions = num_update_actions
         self.num_policy_updates = num_policy_updates
+        self.normalize_advanages = normalize_advanages
 
         if save_logs: self.logger = DataLog()
 
