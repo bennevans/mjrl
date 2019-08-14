@@ -16,8 +16,8 @@ import pickle
 
 class MLPBaseline:
     def __init__(self, env_spec, obs_dim=None, learn_rate=1e-3, reg_coef=0.0,
-                batch_size=64, epochs=1, fit_iters=1, use_gpu=False, hidden_sizes=[128,128], err_tol=1e-6,
-                use_time=False):
+                batch_size=64, epochs=1, fit_iters=1, use_gpu=False, hidden_sizes=[64,64], err_tol=1e-6,
+                use_time=True):
         self.d = env_spec.observation_dim + env_spec.action_dim
         self.batch_size = batch_size
         self.epochs = epochs
@@ -114,6 +114,9 @@ class MLPBaseline:
 
     def fit_off_policy_many(self, replay_buffer, policy, gamma):
         eb = -1
+        print('fit_off_policy_many')
+        print(self.fit_iters)
+        first_model = copy.deepcopy(self.model)
         for j in range(self.fit_iters):
             self.model_old = copy.deepcopy(self.model)
             error_before, error_after = self.fit_off_policy(replay_buffer, policy, gamma, return_errors=True)
@@ -173,7 +176,6 @@ class MLPBaseline:
                 # Qs = self.predict(path_prime) # TODO set flag for both?
                 Qs = self.predict_old(path_prime)
                 targets = (replay_buffer['rewards'] + gamma * Qs).astype('float32')
-
                 terminal_states = np.argwhere(replay_buffer['is_terminal'] == 1)
                 targets[terminal_states] = replay_buffer['rewards'][terminal_states]
 
@@ -196,9 +198,8 @@ class MLPBaseline:
                     data_idx = torch.LongTensor(rand_idx[mb*self.batch_size:(mb+1)*self.batch_size])
                 batch_x = featmat_var[data_idx]
                 batch_y = targets_var[data_idx]
-
                 self.optimizer.zero_grad()
-                yhat = self.model(batch_x)
+                yhat = torch.squeeze(self.model(batch_x))
                 loss = self.loss_function(yhat, batch_y)
                 loss.backward()
                 self.optimizer.step()

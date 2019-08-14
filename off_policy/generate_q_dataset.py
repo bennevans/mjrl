@@ -1,13 +1,13 @@
 
 from mjrl.utils.gym_env import GymEnv
-from mjrl.samplers.trajectory_sampler import sample_paths
+from mjrl.samplers.core import sample_paths
 from mjrl.utils.replay_buffer import ReplayBuffer
 
 import mjrl.envs
 
 import pickle
 
-mode = 'swimmer'
+mode = 'pm'
 
 if mode == 'pm':
     policy_dir = 'point_mass_exp1/iterations/best_policy.pickle'
@@ -33,7 +33,7 @@ print("K: {} T: {} KT: {} seed: {} mode: {}".format(K, T, K*T, seed, mode))
 
 rb = ReplayBuffer(max_dataset_size=10000)
 
-paths = sample_paths(K, policy, T=T, env=e, env_name='myenv_name', mode='evaluation')
+paths = sample_paths(K, e, policy, horizon=T, eval_mode='evaluation')
 
 rb.update(paths)
 

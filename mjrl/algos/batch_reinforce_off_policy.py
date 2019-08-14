@@ -12,8 +12,8 @@ import copy
 
 
 # samplers
-import mjrl.samplers.trajectory_sampler as trajectory_sampler
-import mjrl.samplers.batch_sampler as batch_sampler
+import mjrl.samplers.core as trajectory_sampler
+
 
 # utility functions
 import mjrl.utils.process_samples as process_samples
@@ -111,7 +111,8 @@ class BatchREINFORCEOffPolicy:
                 pg_update_using_rb=True,
                 pg_update_using_advantage=True,
                 num_update_states=10,
-                num_update_actions=10):
+                num_update_actions=10,
+                num_policy_updates=1):
 
         self.env = env
         self.policy = policy
@@ -131,6 +132,7 @@ class BatchREINFORCEOffPolicy:
         self.pg_update_using_advantage = pg_update_using_advantage
         self.num_update_states = num_update_states
         self.num_update_actions = num_update_actions
+        self.num_policy_updates = num_policy_updates
 
         if save_logs: self.logger = DataLog()
 
@@ -156,30 +158,33 @@ class BatchREINFORCEOffPolicy:
 
     # ----------------------------------------------------------
     def train_step(self, N,
+                    env=None,
                     sample_mode='trajectories',
-                    env_name=None,
-                    T=1e6,
+                    horizon=1e6,
                     gamma=0.995,
                     gae_lambda=0.98,
                     num_cpu='max',
                     i=None):
         
         # Clean up input arguments
-        if env_name is None: env_name = self.env.env_id
+        env = self.env.env_id if env is None else env
         if sample_mode != 'trajectories' and sample_mode != 'samples':
             print("sample_mode in NPG must be either 'trajectories' or 'samples'")
             quit()
 
         ts = timer.time()
 
-        if sample_mode == 'trajectories':
-            paths = trajectory_sampler.sample_paths_parallel(N, self.policy, T, env_name,
-                                                            self.seed, num_cpu)
-        elif sample_mode == 'samples':
-            paths = batch_sampler.sample_paths(N, self.policy, T, env_name=env_name,
-                                                pegasus_seed=self.seed, num_cpu=num_cpu)
         
-
+        if sample_mode == 'trajectories':
+            input_dict = dict(num_traj=N, env=env, policy=self.policy, horizon=horizon,
+                              base_seed=self.seed, num_cpu=num_cpu)
+            paths = trajectory_sampler.sample_paths(**input_dict)
+        elif sample_mode == 'samples':
+            input_dict = dict(num_samples=N, env=env, policy=self.policy, horizon=horizon,
+                              base_seed=self.seed, num_cpu=num_cpu)
+            paths = trajectory_sampler.sample_data_batch(**input_dict)
+        
+        
         if self.save_logs:
             self.logger.log_kv('time_sampling', timer.time() - ts)
 
@@ -193,6 +198,21 @@ class BatchREINFORCEOffPolicy:
 
         # train from replay buffer
         self.replay_buffer.update(paths)
+
+        # inner loop (Algorithm 1: line 6)
+        # TODO logging
+        for k in range(self.num_policy_updates):
+            # update Q
+            if self.fit_iter_fn is not None:
+                if i is None:
+                    raise Exception('must set include_i=True in train_agent')
+                self.baseline.fit_iters = self.fit_iter_fn(i)
+            
+            error_before, error_after = self.baseline.fit_off_policy_many(self.replay_buffer, self.policy, gamma)
+
+            # update policy
+            eval_statistics = self.train(paths)
+
         if self.save_logs:
             ts = timer.time()
             # TODO combine error after? throwing away rn

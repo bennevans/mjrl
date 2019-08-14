@@ -11,8 +11,7 @@ from torch.autograd import Variable
 import copy
 
 # samplers
-import mjrl.samplers.trajectory_sampler as trajectory_sampler
-import mjrl.samplers.batch_sampler as batch_sampler
+import mjrl.samplers.core as trajectory_sampler
 
 # utility functions
 import mjrl.utils.process_samples as process_samples
@@ -42,7 +41,8 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
                     pg_update_using_rb=True,
                     pg_update_using_advantage=True,
                     num_update_states=10,
-                    num_update_actions=10):
+                    num_update_actions=10,
+                    num_policy_updates=1):
         """
         All inputs are expected in mjrl's format unless specified
         :param normalized_step_size: Normalized step size (under the KL metric). Twice the desired KL distance
@@ -55,7 +55,8 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
         super().__init__(env, policy, baseline, max_dataset_size=max_dataset_size,
             fit_off_policy=fit_off_policy, fit_on_policy=fit_on_policy,
             fit_iter_fn=fit_iter_fn, drop_mode=drop_mode, pg_update_using_rb=pg_update_using_rb,
-            pg_update_using_advantage=pg_update_using_advantage, num_update_states=num_update_states, num_update_actions=num_update_actions)
+            pg_update_using_advantage=pg_update_using_advantage, num_update_states=num_update_states,
+            num_update_actions=num_update_actions, num_policy_updates=num_policy_updates)
         self.env = env
         self.policy = policy
         self.baseline = baseline
