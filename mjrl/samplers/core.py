@@ -196,12 +196,13 @@ def _try_multiprocess(func, input_dict_list, num_cpu, max_process_time, max_time
     try:
         results = [p.get(timeout=max_process_time) for p in parallel_runs]
     except Exception as e:
-        raise e
         print(str(e))
         print("Timeout Error raised... Trying again")
+        print('Exception', flush=True)
         pool.close()
         pool.terminate()
         pool.join()
+        raise e
         return _try_multiprocess(func, input_dict_list, num_cpu, max_process_time, max_timeouts-1)
 
     pool.close()

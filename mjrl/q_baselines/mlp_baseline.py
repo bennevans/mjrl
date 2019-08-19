@@ -13,11 +13,13 @@ from torch.autograd import Variable
 from mjrl.utils.logger import DataLog
 
 import pickle
+from tqdm import tqdm
+import time as timer
 
 class MLPBaseline:
     def __init__(self, env_spec, obs_dim=None, learn_rate=1e-3, reg_coef=0.0,
                 batch_size=64, epochs=1, fit_iters=1, use_gpu=False, hidden_sizes=[64,64], err_tol=1e-6,
-                use_time=True):
+                use_time=True, use_epochs=False):
         self.d = env_spec.observation_dim + env_spec.action_dim
         self.batch_size = batch_size
         self.epochs = epochs
@@ -43,9 +45,23 @@ class MLPBaseline:
             self.model_old.cuda()
 
         self.use_time = use_time
+        self.use_epochs = use_epochs
 
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=learn_rate, weight_decay=reg_coef)
-        self.loss_function = torch.nn.MSELoss()
+        # self.optimizer = torch.optim.SGD(self.model.parameters(), lr=learn_rate, weight_decay=reg_coef, momentum=0.9)
+        # self.optimizer = torch.optim.SGD(self.model.parameters(), lr=learn_rate, weight_decay=reg_coef, momentum=0.0)
+        # self.loss_function = torch.nn.MSELoss()
+        self.mse_loss = torch.nn.MSELoss()
+        self.lam = 1e5
+
+    def loss_function(self, input, target):
+        diffs = []
+        for curr, new in zip(self.model_old.parameters(), self.model.parameters()):
+            diffs.append(((curr - new)**2).view(-1))
+        diff_loss = torch.mean(torch.cat(diffs))
+        mse_part = self.mse_loss(input, target)
+        # print('losses', mse_part, diff_loss, self.lam * diff_loss)
+        return mse_part + self.lam * diff_loss
 
     def _features(self, path):
         o = np.clip(path["observations"], -10, 10)/10.0
@@ -114,16 +130,32 @@ class MLPBaseline:
 
     def fit_off_policy_many(self, replay_buffer, policy, gamma):
         eb = -1
-        first_model = copy.deepcopy(self.model)
-        for j in range(self.fit_iters):
+
+        # print('fit_off_policy_many', self.fit_iters)
+
+        # first_model = copy.deepcopy(self.model)
+        copy_time = 0.0
+        fit_off_policy_time = 0.0
+        for j in tqdm(range(self.fit_iters)):
+            fit_off_policy_start = timer.time()
             self.model_old = copy.deepcopy(self.model)
+            self.model_old.eval()
+            copy_time_end = timer.time()
             error_before, error_after = self.fit_off_policy(replay_buffer, policy, gamma, return_errors=True)
+
+            fit_end = timer.time()
+            copy_time += (copy_time_end - fit_off_policy_start)
+            fit_off_policy_time += (fit_end - copy_time_end)
             if j == 0:
                 eb = error_before
+        # print('copy_time', copy_time)
+        # print('fit_off_policy_time', fit_off_policy_time)
         return eb, error_after
 
 
     def fit_off_policy(self, replay_buffer, policy, gamma, return_errors=False):
+        # print('fit_off_policy', torch.cuda.memory_allocated(0))
+
         n = replay_buffer['observations'].shape[0]        
 
         observations_prime = replay_buffer['observations_prime']
@@ -155,11 +187,11 @@ class MLPBaseline:
         featmat = np.array(self._features(path)).astype('float32')
 
         if self.use_gpu:
-            featmat_var = Variable(torch.from_numpy(featmat).cuda(), requires_grad=False)
-            targets_var = Variable(torch.from_numpy(targets).cuda(), requires_grad=False)
+            featmat_var = torch.from_numpy(featmat).cuda()
+            targets_var = torch.from_numpy(targets).cuda()
         else:
-            featmat_var = Variable(torch.from_numpy(featmat), requires_grad=False)
-            targets_var = Variable(torch.from_numpy(targets), requires_grad=False)
+            featmat_var = torch.from_numpy(featmat)
+            targets_var = torch.from_numpy(targets)
 
         if return_errors:
             if self.use_gpu:
@@ -168,63 +200,117 @@ class MLPBaseline:
                 predictions = self.model(featmat_var).data.numpy().ravel()
             errors_before = targets.ravel() - predictions
 
+        if self.use_epochs:
+            for ep in range(self.epochs):
 
-        for ep in range(self.epochs):
-            if ep > 0:
-                # Qs = self.predict(path_prime) # TODO set flag for both?
-                Qs = self.predict_old(path_prime)
+                # target_create_start = timer.time()
+
+                if ep > 0:
+                    # Qs = self.predict(path_prime) # TODO set flag for both?
+                    Qs = self.predict_old(path_prime)
+                    targets = (replay_buffer['rewards'] + gamma * Qs).astype('float32')
+                    terminal_states = np.argwhere(replay_buffer['is_terminal'] == 1)
+                    targets[terminal_states] = replay_buffer['rewards'][terminal_states]
+
+                    featmat = np.array(self._features(path)).astype('float32')
+
+                    if self.use_gpu:
+                        featmat_var = Variable(torch.from_numpy(featmat).cuda(), requires_grad=False)
+                        targets_var = Variable(torch.from_numpy(targets).cuda(), requires_grad=False)
+                    else:
+                        featmat_var = Variable(torch.from_numpy(featmat), requires_grad=False)
+                        targets_var = Variable(torch.from_numpy(targets), requires_grad=False)
+
+                # target_create_end = timer.time()
+
+                rand_idx = np.random.permutation(n)
+                for mb in range(n // self.batch_size + 1):
+                    if self.use_gpu:
+                        data_idx = rand_idx[mb*self.batch_size:(mb+1)*self.batch_size]
+                    else:
+                        data_idx = rand_idx[mb*self.batch_size:(mb+1)*self.batch_size]
+                    batch_x = featmat_var[data_idx]
+                    batch_y = targets_var[data_idx]
+                    self.optimizer.zero_grad()
+                    yhat = torch.squeeze(self.model(batch_x))
+                    loss = self.loss_function(yhat, batch_y)
+                    loss.backward()
+                    self.optimizer.step()
+                
+                # mb_end = timer.time()
+
+                # print('target_create', target_create_end - target_create_start)
+                # print('mb time', mb_end - target_create_end)
+
+            # self.model = copy.deepcopy(self.model_old)
+
+            if return_errors:
+                Qs = self.predict(path_prime)
                 targets = (replay_buffer['rewards'] + gamma * Qs).astype('float32')
+
                 terminal_states = np.argwhere(replay_buffer['is_terminal'] == 1)
                 targets[terminal_states] = replay_buffer['rewards'][terminal_states]
-
+        
                 featmat = np.array(self._features(path)).astype('float32')
 
                 if self.use_gpu:
                     featmat_var = Variable(torch.from_numpy(featmat).cuda(), requires_grad=False)
                     targets_var = Variable(torch.from_numpy(targets).cuda(), requires_grad=False)
+                    predictions = self.model(featmat_var).cpu().data.numpy().ravel()
                 else:
                     featmat_var = Variable(torch.from_numpy(featmat), requires_grad=False)
                     targets_var = Variable(torch.from_numpy(targets), requires_grad=False)
+                    predictions = self.model(featmat_var).data.numpy().ravel()
+                    
+                errors_after = targets.ravel() - predictions
+                    
 
 
+            if return_errors:
+                error_before = np.sum(errors_before**2) / (np.sum(targets**2) + 1e-8)
+                error_after = np.sum(errors_after**2) / (np.sum(targets**2) + 1e-8)
+                return error_before, error_after
+        else:
+            for ep in range(self.epochs): # use epochs as iterations for now
+                batch_idx = np.random.permutation(n)[:self.batch_size]
 
-            rand_idx = np.random.permutation(n)
-            for mb in range(n // self.batch_size - 1):
-                if self.use_gpu:
-                    data_idx = torch.LongTensor(rand_idx[mb*self.batch_size:(mb+1)*self.batch_size]).cuda()
-                else:
-                    data_idx = torch.LongTensor(rand_idx[mb*self.batch_size:(mb+1)*self.batch_size])
-                batch_x = featmat_var[data_idx]
-                batch_y = targets_var[data_idx]
+                batch_x = featmat_var[batch_idx]
+                batch_y = targets_var[batch_idx]
                 self.optimizer.zero_grad()
                 yhat = torch.squeeze(self.model(batch_x))
                 loss = self.loss_function(yhat, batch_y)
                 loss.backward()
                 self.optimizer.step()
-
-        # self.model = copy.deepcopy(self.model_old)
-
-        if return_errors:
-            Qs = self.predict(path_prime)
-            targets = (replay_buffer['rewards'] + gamma * Qs).astype('float32')
-
-            terminal_states = np.argwhere(replay_buffer['is_terminal'] == 1)
-            targets[terminal_states] = replay_buffer['rewards'][terminal_states]
-    
-            featmat = np.array(self._features(path)).astype('float32')
-
-            if self.use_gpu:
-                featmat_var = Variable(torch.from_numpy(featmat).cuda(), requires_grad=False)
-                targets_var = Variable(torch.from_numpy(targets).cuda(), requires_grad=False)
-                predictions = self.model(featmat_var).cpu().data.numpy().ravel()
-            else:
-                featmat_var = Variable(torch.from_numpy(featmat), requires_grad=False)
-                targets_var = Variable(torch.from_numpy(targets), requires_grad=False)
-                predictions = self.model(featmat_var).data.numpy().ravel()
                 
-            errors_after = targets.ravel() - predictions
-                
+                # mb_end = timer.time()
 
+                # print('target_create', target_create_end - target_create_start)
+                # print('mb time', mb_end - target_create_end)
+
+            # self.model = copy.deepcopy(self.model_old)
+
+            if return_errors:
+                Qs = self.predict(path_prime)
+                targets = (replay_buffer['rewards'] + gamma * Qs).astype('float32')
+
+                terminal_states = np.argwhere(replay_buffer['is_terminal'] == 1)
+                targets[terminal_states] = replay_buffer['rewards'][terminal_states]
+        
+                featmat = np.array(self._features(path)).astype('float32')
+
+                if self.use_gpu:
+                    featmat_var = Variable(torch.from_numpy(featmat).cuda(), requires_grad=False)
+                    targets_var = Variable(torch.from_numpy(targets).cuda(), requires_grad=False)
+                    predictions = self.model(featmat_var).cpu().data.numpy().ravel()
+                else:
+                    featmat_var = Variable(torch.from_numpy(featmat), requires_grad=False)
+                    targets_var = Variable(torch.from_numpy(targets), requires_grad=False)
+                    predictions = self.model(featmat_var).data.numpy().ravel()
+                    
+                errors_after = targets.ravel() - predictions
+            
+        del featmat_var
+        del targets_var
 
         if return_errors:
             error_before = np.sum(errors_before**2) / (np.sum(targets**2) + 1e-8)
@@ -233,21 +319,26 @@ class MLPBaseline:
 
 
     def predict(self, path):
+        # print('predict', torch.cuda.memory_allocated(0))
         featmat = self._features(path).astype('float32')
         if self.use_gpu:
-            feat_var = Variable(torch.from_numpy(featmat).float().cuda(), requires_grad=False)
+            feat_var = torch.from_numpy(featmat).float().cuda()
             prediction = self.model(feat_var).cpu().data.numpy().ravel()
         else:
-            feat_var = Variable(torch.from_numpy(featmat).float(), requires_grad=False)
+            feat_var = torch.from_numpy(featmat).float()
             prediction = self.model(feat_var).data.numpy().ravel()
+        del featmat
+        del feat_var
         return prediction
 
     def predict_old(self, path):
         featmat = self._features(path).astype('float32')
         if self.use_gpu:
-            feat_var = Variable(torch.from_numpy(featmat).float().cuda(), requires_grad=False)
+            feat_var = torch.from_numpy(featmat).float().cuda()
             prediction = self.model_old(feat_var).cpu().data.numpy().ravel()
         else:
-            feat_var = Variable(torch.from_numpy(featmat).float(), requires_grad=False)
+            feat_var = torch.from_numpy(featmat).float()
             prediction = self.model_old(feat_var).data.numpy().ravel()
+        del featmat
+        del feat_var
         return prediction

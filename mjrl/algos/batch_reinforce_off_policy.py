@@ -100,6 +100,10 @@ def line_fit(pred, mc):
         print(str(e))
         return 0, 0, -1
 class BatchREINFORCEOffPolicy:
+    NORMALIZE_STD = 'standard_normalize'
+    NORMALIZE_FIXED_RANGE = 'range_normalize'
+    NORMALIZE_MIN_MAX = 'range_min_max'
+    NORMALIZE_OFF = 'no_normalize'
     def __init__(self, env, policy, baseline,
                 max_dataset_size=-1,
                 learn_rate=0.01,
@@ -116,7 +120,7 @@ class BatchREINFORCEOffPolicy:
                 num_update_states=10,
                 num_update_actions=10,
                 num_policy_updates=1,
-                normalize_advanages=True):
+                normalize_mode=NORMALIZE_STD):
 
         self.env = env
         self.policy = policy
@@ -137,7 +141,7 @@ class BatchREINFORCEOffPolicy:
         self.num_update_states = num_update_states
         self.num_update_actions = num_update_actions
         self.num_policy_updates = num_policy_updates
-        self.normalize_advanages = normalize_advanages
+        self.normalize_mode = normalize_mode
 
         if save_logs: self.logger = DataLog()
 
@@ -206,77 +210,54 @@ class BatchREINFORCEOffPolicy:
 
         # inner loop (Algorithm 1: line 6)
         # TODO logging
+        start_loop = timer.time()
+
+        baseline_time = 0.0
+        pg_time = 0.0
+
+        if self.save_logs:
+            ts = timer.time()
+            pred_1, mc_1 = evaluate_n_step(1, gamma, paths, self.baseline)
+            pred_start_end, mc_start_end = evaluate_start_end(gamma, paths, self.baseline)
+            self.logger.log_kv('MSE_1_before', mse(pred_1, mc_1))
+            self.logger.log_kv('MSE_end_before', mse(pred_start_end, mc_start_end))
+
         for k in range(self.num_policy_updates):
             # update Q
             if self.fit_iter_fn is not None:
                 if i is None:
                     raise Exception('must set include_i=True in train_agent')
                 self.baseline.fit_iters = self.fit_iter_fn(i)
-            
-            error_before, error_after = self.baseline.fit_off_policy_many(self.replay_buffer, self.policy, gamma)
 
+            start_baseline = timer.time()
+            # import pdb;pdb.set_trace()
+            error_before, error_after = self.baseline.fit_off_policy_many(self.replay_buffer, self.policy, gamma)
+            end_baseline = timer.time()
             # update policy
             eval_statistics = self.train(paths)
+            end_train = timer.time()
+
+            baseline_time += (end_baseline - start_baseline)
+            pg_time += (end_train - end_baseline)
 
         if self.save_logs:
             ts = timer.time()
-            # TODO combine error after? throwing away rn
-            if self.fit_on_policy:
-                error_before, error_after = self.baseline.fit(paths, return_errors=True)
-            if self.fit_off_policy:
-                pred_1, mc_1 = evaluate_n_step(1, gamma, paths, self.baseline)
-                pred_start_end, mc_start_end = evaluate_start_end(gamma, paths, self.baseline)
-                m_1, b_1, r_sq_1 = line_fit(pred_1, mc_1)
-                m_end, b_end, r_sq_end = line_fit(pred_start_end, mc_start_end)
-                self.logger.log_kv('MSE_1_before', mse(pred_1, mc_1))
-                self.logger.log_kv('MSE_end_before', mse(pred_start_end, mc_start_end))
-                self.logger.log_kv('m_1_before', m_1)
-                self.logger.log_kv('b_1_before', b_1)
-                self.logger.log_kv('r_sq_1_before', r_sq_1)
-                self.logger.log_kv('m_end_before', m_end)
-                self.logger.log_kv('b_end_before', b_end)
-                self.logger.log_kv('r_sq_end_before', r_sq_end)
+            self.logger.log_kv('fit_iters', self.baseline.fit_iters)
+            self.logger.log_kv('fit_epochs', self.baseline.epochs)
 
-                if self.fit_iter_fn is not None:
-                    if i is None:
-                        raise Exception('must set include_i=True in train_agent')
-                    self.baseline.fit_iters = self.fit_iter_fn(i)
-                error_before, error_after = self.baseline.fit_off_policy_many(self.replay_buffer, self.policy, gamma)
-                self.logger.log_kv('fit_iters', self.baseline.fit_iters)
-                self.logger.log_kv('fit_epochs', self.baseline.epochs)
-
-                pred_1, mc_1 = evaluate_n_step(1, gamma, paths, self.baseline)
-                pred_start_end, mc_start_end = evaluate_start_end(gamma, paths, self.baseline)
-                m_1, b_1, r_sq_1 = line_fit(pred_1, mc_1)
-                m_end, b_end, r_sq_end = line_fit(pred_start_end, mc_start_end)
-                self.logger.log_kv('MSE_1_after', mse(pred_1, mc_1))
-                self.logger.log_kv('MSE_end_after', mse(pred_start_end, mc_start_end))
-                self.logger.log_kv('m_1_after', m_1)
-                self.logger.log_kv('b_1_after', b_1)
-                self.logger.log_kv('r_sq_1_after', r_sq_1)
-                self.logger.log_kv('m_end_after', m_end)
-                self.logger.log_kv('b_end_after', b_end)
-                self.logger.log_kv('r_sq_end_after', r_sq_end)
-
-            self.logger.log_kv('rb_num_terminal', np.sum(self.replay_buffer['is_terminal']))
-            self.logger.log_kv('rb_oldest', np.min(self.replay_buffer['iterations']))
-            self.logger.log_kv('rb_newest', np.max(self.replay_buffer['iterations']))
-            self.logger.log_kv('rb_avg_age', np.mean(self.replay_buffer['iterations']))
+            pred_1, mc_1 = evaluate_n_step(1, gamma, paths, self.baseline)
+            pred_start_end, mc_start_end = evaluate_start_end(gamma, paths, self.baseline)
+            self.logger.log_kv('MSE_1_after', mse(pred_1, mc_1))
+            self.logger.log_kv('MSE_end_after', mse(pred_start_end, mc_start_end))
 
             self.logger.log_kv('time_VF', timer.time()-ts)
+            self.logger.log_kv('time_baseline', baseline_time)
+            self.logger.log_kv('time_pg', pg_time)
             self.logger.log_kv('VF_error_before', error_before)
             self.logger.log_kv('VF_error_after', error_after)
             self.logger.log_kv('dataset_size', len(self.replay_buffer['observations']))
             self.logger.log_kv('t', self.replay_buffer['t'])
 
-        else:
-            if self.fit_on_policy:
-                self.baseline.fit(paths)
-            if self.fit_off_policy:
-                self.baseline.fit_off_policy_many(self.replay_buffer, self.policy, gamma)
-
-        # eval_statistics = self.train_from_replay_buffer(paths)
-        eval_statistics = self.train(paths)
         eval_statistics.append(N)
 
         if self.save_logs:
@@ -325,7 +306,7 @@ class BatchREINFORCEOffPolicy:
 
     def train(self, paths):
         raise Exception('not implemented')
-        return None
+        return []
 
     def train_from_replay_buffer(self, paths):
         # TODO cache baseline and only update when necessary?

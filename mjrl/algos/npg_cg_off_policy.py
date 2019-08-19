@@ -43,7 +43,8 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
                     num_update_states=10,
                     num_update_actions=10,
                     num_policy_updates=1,
-                    normalize_advanages=True):
+                    normalize_mode=BatchREINFORCEOffPolicy.NORMALIZE_STD,
+                    non_uniform=False):
         """
         All inputs are expected in mjrl's format unless specified
         :param normalized_step_size: Normalized step size (under the KL metric). Twice the desired KL distance
@@ -57,7 +58,7 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
             fit_off_policy=fit_off_policy, fit_on_policy=fit_on_policy,
             fit_iter_fn=fit_iter_fn, drop_mode=drop_mode, pg_update_using_rb=pg_update_using_rb,
             pg_update_using_advantage=pg_update_using_advantage, num_update_states=num_update_states,
-            num_update_actions=num_update_actions, num_policy_updates=num_policy_updates, normalize_advanages=normalize_advanages)
+            num_update_actions=num_update_actions, num_policy_updates=num_policy_updates, normalize_mode=normalize_mode)
         self.env = env
         self.policy = policy
         self.baseline = baseline
@@ -71,6 +72,7 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
         self.use_batches = use_batches
         self.epochs = epochs
         self.batch_size = batch_size
+        self.non_uniform = non_uniform
         if save_logs: self.logger = DataLog()
 
     def HVP(self, observations, actions, vector, regu_coef=None):
@@ -146,7 +148,7 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
         # TODO repeat this process k times?
 
         if self.pg_update_using_rb:
-            samples, n = self.replay_buffer.sample(n) # TODO is it bad to reupdate n?
+            samples, n = self.replay_buffer.sample(n, self.baseline, self.non_uniform) # TODO is it bad to reupdate n?
             observations = np.tile(samples['observations'], (m, 1))
             times = np.tile(samples['times'], (m))
             traj_length = np.tile(samples['traj_length'], (m))
@@ -166,6 +168,10 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
                 self.logger.log_kv('Q_max', np.max(Qs))
                 self.logger.log_kv('Q_min', np.min(Qs))
                 self.logger.log_kv('Q_std', np.std(Qs))
+                self.logger.log_kv('rb_mean_reward', np.mean(samples['rewards']))
+                self.logger.log_kv('rb_max_reward', np.max(samples['rewards']))
+                self.logger.log_kv('rb_min_reward', np.min(samples['rewards']))
+                self.logger.log_kv('rb_std_reward', np.std(samples['rewards']))
             
             weights = np.copy(Qs)
 
@@ -178,8 +184,21 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
                     V = np.average(Qs[i::n])
                     weights[i::n] -= V
                 
-                if self.normalize_advanages:
+                if self.normalize_mode == BatchREINFORCEOffPolicy.NORMALIZE_STD:
                     weights = (weights - np.mean(weights)) / (np.std(weights) + 1e-6)
+                elif self.normalize_mode == BatchREINFORCEOffPolicy.NORMALIZE_FIXED_RANGE:
+                    min_weight = np.min(weights)
+                    max_weight = np.max(weights)
+                    new_min = -1
+                    new_max = 1
+                    weights = (weights-min_weight) / (max_weight - min_weight) * (new_max - new_min) + new_min
+                elif self.normalize_mode == BatchREINFORCEOffPolicy.NORMALIZE_MIN_MAX:
+                    min_weight = np.min(weights)
+                    max_weight = np.max(weights)
+
+                    norm_factor = max(np.abs(min_weight), np.abs(max_weight))
+
+                    weights /= norm_factor
 
                 if self.save_logs:
                     self.logger.log_kv('weights_mean', np.mean(weights))
@@ -206,6 +225,9 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
             self.logger.log_kv('kl_dist', kl_dist)
             self.logger.log_kv('surr_improvement', surr_after - surr_before)
             self.logger.log_kv('running_score', self.running_score)
+            std = np.exp(self.policy.log_std.detach().numpy())
+            for i, v in enumerate(std):
+                self.logger.log_kv('std_{}'.format(i), v)
             try:
                 self.env.env.env.evaluate_success(paths, self.logger)
             except:

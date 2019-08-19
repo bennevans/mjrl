@@ -1,7 +1,7 @@
 
 import numpy as np
 
-class ReplayBuffer():
+class ReplayBuffer:
 
     DROP_MODE_OLDEST = 'oldest'
     DROP_MODE_RANDOM = 'random'
@@ -88,12 +88,31 @@ class ReplayBuffer():
     def __getitem__(self, key):
         return self.replay_buffer[key]
 
-    def sample(self, n):
+    def sample(self, n, baseline, non_uniform=True):
         """
         returns n samples from the replay buffer at uniform random in dict form
         """
         cur_size = len(self.replay_buffer['observations'])
-        sample_idx = np.random.permutation(np.arange(cur_size))[:n]
+
+        if non_uniform:
+            x = self.replay_buffer['iterations']
+            # x = baseline.predict(
+            #     {
+            #     'observations': self.replay_buffer['observations'],
+            #     'actions': self.replay_buffer['actions'],
+            #     'times': self.replay_buffer['times'],
+            #     'traj_length': self.replay_buffer['traj_length']
+            #     }
+            # )
+            # x = self.replay_buffer['rewards']
+            lamb = 0.5
+            e_x = np.exp((x - np.max(x))*lamb)
+            p = e_x / np.sum(e_x)
+            # import pdb;pdb.set_trace()
+            print('p', np.max(p), 1/len(p))
+            sample_idx = np.random.choice(cur_size, n, p=p)
+        else:
+            sample_idx = np.random.permutation(np.arange(cur_size))[:n]
 
         # assert n < cur_size # TODO handle this case
 
