@@ -18,6 +18,7 @@ class GymEnv(object):
         env = gym.make(env_name)
         self.env = env
         self.env_id = env.spec.id
+        self.obs_dict = False
 
         try:
             self._horizon = env.spec.max_episode_steps
@@ -28,12 +29,17 @@ class GymEnv(object):
             self._action_dim = self.env.env.action_dim
         except AttributeError:
             self._action_dim = self.env.action_space.shape[0]
-
+        
         try:
             self._observation_dim = self.env.env.obs_dim
         except AttributeError:
-            self._observation_dim = self.env.observation_space.shape[0]
-
+            try:
+                self._observation_dim = self.env.observation_space.shape[0]
+            except TypeError:
+                self.obs_dict = True
+                self._observation_dim = 0
+                for obs_part in self.env.observation_space.spaces.values():
+                    self._observation_dim += obs_part.shape[0]
         # Specs
         self.spec = EnvSpec(self._observation_dim, self._action_dim, self._horizon)
 
@@ -64,14 +70,24 @@ class GymEnv(object):
         except:
             if seed is not None:
                 self.set_seed(seed)
-            return self.env.reset()
-
+                
+            obs = self.env.reset()
+            if self.obs_dict:
+                return np.concatenate(list(obs.values()))
+            else:
+                return obs
     def reset_model(self, seed=None):
         # overloading for legacy code
         return self.reset(seed)
 
     def step(self, action):
-        return self.env.step(action)
+        obs, reward, done, info = self.env.step(action)
+        
+        if self.obs_dict:
+            return np.concatenate(list(obs.values())), reward, done, info
+        else:
+            return obs, reward, done, info
+        # return self.env.step(action)
 
     def render(self):
         try:
