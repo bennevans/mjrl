@@ -147,67 +147,49 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
 
         # TODO repeat this process k times?
 
-        if self.pg_update_using_rb:
-            samples, n = self.replay_buffer.sample(n, self.baseline, self.non_uniform) # TODO is it bad to reupdate n?
-            observations = np.tile(samples['observations'], (m, 1))
-            times = np.tile(samples['times'], (m))
-            traj_length = np.tile(samples['traj_length'], (m))
-            actions = self.policy.get_action_batch(observations)
+        samples, n = self.replay_buffer.sample(n, self.baseline, self.non_uniform) # TODO is it bad to reupdate n?
+        observations = np.tile(samples['observations'], (m, 1))
+        times = np.tile(samples['times'], (m))
+        traj_length = np.tile(samples['traj_length'], (m))
+        actions = self.policy.get_action_batch(observations)
 
+        weights = np.zeros(n*m)
+
+        for i in range(n):
+            
             Qs = self.baseline.predict(
                 {
-                'observations': observations,
-                'actions': actions,
-                'times': times,
-                'traj_length': traj_length
+                'observations': observations[i::n],
+                'actions': actions[i::n],
+                'times': times[i::n],
+                'traj_length': traj_length[i::n]
                 }
             )
+            V = np.average(Qs)
+            weights[i::n] = Qs - V
+        
+        if self.normalize_mode == BatchREINFORCEOffPolicy.NORMALIZE_STD:
+            weights = (weights - np.mean(weights)) / (np.std(weights) + 1e-6)
+        elif self.normalize_mode == BatchREINFORCEOffPolicy.NORMALIZE_FIXED_RANGE:
+            min_weight = np.min(weights)
+            max_weight = np.max(weights)
+            new_min = -1
+            new_max = 1
+            weights = (weights-min_weight) / (max_weight - min_weight) * (new_max - new_min) + new_min
+        elif self.normalize_mode == BatchREINFORCEOffPolicy.NORMALIZE_MIN_MAX:
+            min_weight = np.min(weights)
+            max_weight = np.max(weights)
 
-            if self.save_logs:
-                self.logger.log_kv('Q_mean', np.mean(Qs))
-                self.logger.log_kv('Q_max', np.max(Qs))
-                self.logger.log_kv('Q_min', np.min(Qs))
-                self.logger.log_kv('Q_std', np.std(Qs))
-                self.logger.log_kv('rb_mean_reward', np.mean(samples['rewards']))
-                self.logger.log_kv('rb_max_reward', np.max(samples['rewards']))
-                self.logger.log_kv('rb_min_reward', np.min(samples['rewards']))
-                self.logger.log_kv('rb_std_reward', np.std(samples['rewards']))
-            
-            weights = np.copy(Qs)
+            norm_factor = max(np.abs(min_weight), np.abs(max_weight))
 
-            
+            weights /= norm_factor
 
-            # TODO do non-loop
-            if self.pg_update_using_advantage:
-                for i in range(n):
-                    observations[i::n]
-                    V = np.average(Qs[i::n])
-                    weights[i::n] -= V
-                
-                if self.normalize_mode == BatchREINFORCEOffPolicy.NORMALIZE_STD:
-                    weights = (weights - np.mean(weights)) / (np.std(weights) + 1e-6)
-                elif self.normalize_mode == BatchREINFORCEOffPolicy.NORMALIZE_FIXED_RANGE:
-                    min_weight = np.min(weights)
-                    max_weight = np.max(weights)
-                    new_min = -1
-                    new_max = 1
-                    weights = (weights-min_weight) / (max_weight - min_weight) * (new_max - new_min) + new_min
-                elif self.normalize_mode == BatchREINFORCEOffPolicy.NORMALIZE_MIN_MAX:
-                    min_weight = np.min(weights)
-                    max_weight = np.max(weights)
-
-                    norm_factor = max(np.abs(min_weight), np.abs(max_weight))
-
-                    weights /= norm_factor
-
-                if self.save_logs:
-                    self.logger.log_kv('weights_mean', np.mean(weights))
-                    self.logger.log_kv('weights_max', np.max(weights))
-                    self.logger.log_kv('weights_min', np.min(weights))
-                    self.logger.log_kv('weights_std', np.std(weights))
-                    # TODO log vs?
-        else:
-            raise Exception('not implemented')
+        if self.save_logs:
+            self.logger.log_kv('weights_mean', np.mean(weights))
+            self.logger.log_kv('weights_max', np.max(weights))
+            self.logger.log_kv('weights_min', np.min(weights))
+            self.logger.log_kv('weights_std', np.std(weights))
+            # TODO log vs?
 
         surr_before = self.CPI_surrogate(observations, actions, weights).data.numpy().ravel()[0]
         alpha, n_step_size, t_gLL, t_FIM, new_params = self.update_policy(observations, actions, weights)
