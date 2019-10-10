@@ -63,6 +63,7 @@ class BatchREINFORCE:
                    gamma=0.995,
                    gae_lambda=0.97,
                    num_cpu='max',
+                   pool=None
                    ):
 
         # Clean up input arguments
@@ -75,15 +76,16 @@ class BatchREINFORCE:
 
         if sample_mode == 'trajectories':
             input_dict = dict(num_traj=N, env=env, policy=self.policy, horizon=horizon,
-                              base_seed=self.seed, num_cpu=num_cpu)
+                              base_seed=self.seed, num_cpu=num_cpu, pool=pool)
             paths = trajectory_sampler.sample_paths(**input_dict)
         elif sample_mode == 'samples':
             input_dict = dict(num_samples=N, env=env, policy=self.policy, horizon=horizon,
-                              base_seed=self.seed, num_cpu=num_cpu)
+                              base_seed=self.seed, num_cpu=num_cpu, pool=pool)
             paths = trajectory_sampler.sample_data_batch(**input_dict)
 
         if self.save_logs:
             self.logger.log_kv('time_sampling', timer.time() - ts)
+            
 
         self.seed = self.seed + N if self.seed is not None else self.seed
 
@@ -98,6 +100,9 @@ class BatchREINFORCE:
         if self.save_logs:
             num_samples = np.sum([p["rewards"].shape[0] for p in paths])
             self.logger.log_kv('num_samples', num_samples)
+            std = np.exp(self.policy.log_std.detach().numpy())
+            for i, v in enumerate(std):
+                self.logger.log_kv('std_{}'.format(i), v)
         # fit baseline
         if self.save_logs:
             ts = timer.time()

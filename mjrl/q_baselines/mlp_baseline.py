@@ -19,21 +19,22 @@ import time as timer
 class MLPBaseline:
     def __init__(self, env_spec, obs_dim=None, learn_rate=1e-3, reg_coef=0.0,
                 batch_size=64, epochs=1, fit_iters=1, use_gpu=False, hidden_sizes=[64,64], err_tol=1e-6,
-                use_time=True, use_epochs=False):
+                use_time=True, use_epochs=False, nonlin=nn.ReLU):
         self.d = env_spec.observation_dim + env_spec.action_dim
         self.batch_size = batch_size
         self.epochs = epochs
         self.fit_iters = fit_iters
         self.reg_coef = reg_coef
         self.use_gpu = use_gpu
+        self.learn_rate = learn_rate
         
         self.logger = DataLog()
 
-        modules = [nn.Linear(self.d + int(use_time), hidden_sizes[0]), nn.ReLU()]
+        modules = [nn.Linear(self.d + int(use_time) * 3, hidden_sizes[0]), nonlin()]
 
         for i in range(len(hidden_sizes) - 1):
             modules.append(nn.Linear(hidden_sizes[i], hidden_sizes[i+1]))
-            modules.append(nn.ReLU())
+            modules.append(nonlin())
 
         modules.append(nn.Linear(hidden_sizes[-1], 1))
 
@@ -50,28 +51,32 @@ class MLPBaseline:
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=learn_rate, weight_decay=reg_coef)
         # self.optimizer = torch.optim.SGD(self.model.parameters(), lr=learn_rate, weight_decay=reg_coef, momentum=0.9)
         # self.optimizer = torch.optim.SGD(self.model.parameters(), lr=learn_rate, weight_decay=reg_coef, momentum=0.0)
-        # self.loss_function = torch.nn.MSELoss()
-        self.mse_loss = torch.nn.MSELoss()
-        self.lam = 1e5
+        self.loss_function = torch.nn.MSELoss()
+        # self.loss_function = torch.nn.SmoothL1Loss()
+        # self.mse_loss = torch.nn.MSELoss()
+        # self.lam = 1e5
 
-    def loss_function(self, input, target):
-        diffs = []
-        for curr, new in zip(self.model_old.parameters(), self.model.parameters()):
-            diffs.append(((curr - new)**2).view(-1))
-        diff_loss = torch.mean(torch.cat(diffs))
-        mse_part = self.mse_loss(input, target)
-        # print('losses', mse_part, diff_loss, self.lam * diff_loss)
-        return mse_part + self.lam * diff_loss
+    # def loss_function(self, input, target):
+    #     diffs = []
+    #     for curr, new in zip(self.model_old.parameters(), self.model.parameters()):
+    #         diffs.append(((curr - new)**2).view(-1))
+    #     diff_loss = torch.mean(torch.cat(diffs))
+    #     mse_part = self.mse_loss(input, target)
+    #     # print('losses', mse_part, diff_loss, self.lam * diff_loss)
+    #     return mse_part + self.lam * diff_loss
 
     def _features(self, path):
         o = np.clip(path["observations"], -10, 10)/10.0
-
-        a = np.clip(path["actions"], -10, 10) # assumes actions are up-to-date
+        # TODO this / 10 for the actions is new. attempt to prevent numerical instability
+        a = np.clip(path["actions"], -10, 10) / 10.0 # assumes actions are up-to-date
         
         feats_list = [o, a]
 
         if self.use_time:
-            feats_list.append(np.expand_dims(path['times'] / path['traj_length'], axis=1))
+            t = np.expand_dims(path['times'] / path['traj_length'], axis=1)
+            feats_list.append(t)
+            feats_list.append(t**2)
+            feats_list.append(t**3)
         features = np.concatenate(feats_list, axis=1)
 
         if features.ndim > 2:
@@ -129,28 +134,58 @@ class MLPBaseline:
             return error_before, error_after
 
     def fit_off_policy_many(self, replay_buffer, policy, gamma):
-        eb = -1
+
+        # self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learn_rate, weight_decay=self.reg_coef)
+
 
         # print('fit_off_policy_many', self.fit_iters)
 
         # first_model = copy.deepcopy(self.model)
         copy_time = 0.0
         fit_off_policy_time = 0.0
+
+        all_weights = torch.cat([torch.flatten(x) for x in self.model.parameters()])
+        pre_norm = torch.norm(all_weights).item()
+        errors = []
+
         for j in tqdm(range(self.fit_iters)):
             fit_off_policy_start = timer.time()
+
+            # TODO testing this out
+            # self.optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learn_rate, weight_decay=self.reg_coef)
+
             self.model_old = copy.deepcopy(self.model)
             self.model_old.eval()
             copy_time_end = timer.time()
-            error_before, error_after = self.fit_off_policy(replay_buffer, policy, gamma, return_errors=True)
+            errors += self.fit_off_policy(replay_buffer, policy, gamma, return_errors=False)
 
             fit_end = timer.time()
             copy_time += (copy_time_end - fit_off_policy_start)
             fit_off_policy_time += (fit_end - copy_time_end)
-            if j == 0:
-                eb = error_before
+
+            all_weights_old = torch.cat([torch.flatten(x) for x in self.model_old.parameters()])
+            norm_old = torch.norm(all_weights_old).item()
+
+            all_weights = torch.cat([torch.flatten(x) for x in self.model.parameters()])
+            norm_new = torch.norm(all_weights).item()
+
+            if np.abs(norm_old - norm_new) > 100:
+                print('big norm diff inner')
+                print('old', norm_old, 'new', norm_new)
+                import pdb; pdb.set_trace()
+        
+        all_weights = torch.cat([torch.flatten(x) for x in self.model.parameters()])
+        post_norm = torch.norm(all_weights).item()
+
+        print('pre:', pre_norm, 'post:', post_norm)
+
+        if np.abs(pre_norm - post_norm) > 100:
+            print('big norm diff')
+            # import pdb; pdb.set_trace()
+
         # print('copy_time', copy_time)
         # print('fit_off_policy_time', fit_off_policy_time)
-        return eb, error_after
+        return errors
 
 
     def fit_off_policy(self, replay_buffer, policy, gamma, return_errors=False):
@@ -159,7 +194,7 @@ class MLPBaseline:
         n = replay_buffer['observations'].shape[0]        
 
         observations_prime = replay_buffer['observations_prime']
-        actions_prime = policy.get_action_batch(observations_prime)
+        actions_prime = policy.get_mean_action_batch(observations_prime)
         
         path = {
             'observations': replay_buffer['observations'],
@@ -178,48 +213,27 @@ class MLPBaseline:
             path_prime['times'] = replay_buffer['times'] + 1
             path_prime['traj_length'] = replay_buffer['traj_length']
 
-        Qs = self.predict_old(path_prime)
-        targets = (replay_buffer['rewards'] + gamma * Qs).astype('float32')
-
-        terminal_states = np.argwhere(replay_buffer['is_terminal'] == 1)
-        targets[terminal_states] = replay_buffer['rewards'][terminal_states]
-
-        featmat = np.array(self._features(path)).astype('float32')
-
-        if self.use_gpu:
-            featmat_var = torch.from_numpy(featmat).cuda()
-            targets_var = torch.from_numpy(targets).cuda()
-        else:
-            featmat_var = torch.from_numpy(featmat)
-            targets_var = torch.from_numpy(targets)
-
-        if return_errors:
-            if self.use_gpu:
-                predictions = self.model(featmat_var).cpu().data.numpy().ravel()
-            else:
-                predictions = self.model(featmat_var).data.numpy().ravel()
-            errors_before = targets.ravel() - predictions
 
         if self.use_epochs:
+
             for ep in range(self.epochs):
 
                 # target_create_start = timer.time()
 
-                if ep > 0:
-                    # Qs = self.predict(path_prime) # TODO set flag for both?
-                    Qs = self.predict_old(path_prime)
-                    targets = (replay_buffer['rewards'] + gamma * Qs).astype('float32')
-                    terminal_states = np.argwhere(replay_buffer['is_terminal'] == 1)
-                    targets[terminal_states] = replay_buffer['rewards'][terminal_states]
+                # Qs = self.predict(path_prime) # TODO set flag for both?
+                Qs = self.predict_old(path_prime)
+                targets = (replay_buffer['rewards'] + gamma * Qs).astype('float32')
+                terminal_states = np.argwhere(replay_buffer['is_terminal'] == 1)
+                targets[terminal_states] = replay_buffer['rewards'][terminal_states]
 
-                    featmat = np.array(self._features(path)).astype('float32')
+                featmat = np.array(self._features(path)).astype('float32')
 
-                    if self.use_gpu:
-                        featmat_var = Variable(torch.from_numpy(featmat).cuda(), requires_grad=False)
-                        targets_var = Variable(torch.from_numpy(targets).cuda(), requires_grad=False)
-                    else:
-                        featmat_var = Variable(torch.from_numpy(featmat), requires_grad=False)
-                        targets_var = Variable(torch.from_numpy(targets), requires_grad=False)
+                if self.use_gpu:
+                    featmat_var = Variable(torch.from_numpy(featmat).cuda(), requires_grad=False)
+                    targets_var = Variable(torch.from_numpy(targets).cuda(), requires_grad=False)
+                else:
+                    featmat_var = Variable(torch.from_numpy(featmat), requires_grad=False)
+                    targets_var = Variable(torch.from_numpy(targets), requires_grad=False)
 
                 # target_create_end = timer.time()
 
@@ -244,41 +258,56 @@ class MLPBaseline:
 
             # self.model = copy.deepcopy(self.model_old)
 
-            if return_errors:
-                Qs = self.predict(path_prime)
-                targets = (replay_buffer['rewards'] + gamma * Qs).astype('float32')
-
-                terminal_states = np.argwhere(replay_buffer['is_terminal'] == 1)
-                targets[terminal_states] = replay_buffer['rewards'][terminal_states]
-        
-                featmat = np.array(self._features(path)).astype('float32')
-
-                if self.use_gpu:
-                    featmat_var = Variable(torch.from_numpy(featmat).cuda(), requires_grad=False)
-                    targets_var = Variable(torch.from_numpy(targets).cuda(), requires_grad=False)
-                    predictions = self.model(featmat_var).cpu().data.numpy().ravel()
-                else:
-                    featmat_var = Variable(torch.from_numpy(featmat), requires_grad=False)
-                    targets_var = Variable(torch.from_numpy(targets), requires_grad=False)
-                    predictions = self.model(featmat_var).data.numpy().ravel()
-                    
-                errors_after = targets.ravel() - predictions
-                    
-
-
-            if return_errors:
-                error_before = np.sum(errors_before**2) / (np.sum(targets**2) + 1e-8)
-                error_after = np.sum(errors_after**2) / (np.sum(targets**2) + 1e-8)
-                return error_before, error_after
         else:
+            errors = []
             for ep in range(self.epochs): # use epochs as iterations for now
                 batch_idx = np.random.permutation(n)[:self.batch_size]
 
-                batch_x = featmat_var[batch_idx]
-                batch_y = targets_var[batch_idx]
+                path = {
+                    'observations': replay_buffer['observations'][batch_idx],
+                    'actions': replay_buffer['actions'][batch_idx],
+                }
+
+                path_prime = {
+                    'observations': observations_prime[batch_idx],
+                    'actions': actions_prime[batch_idx]
+                }
+
+                if(self.use_time):
+                    path['times'] = replay_buffer['times'][batch_idx]
+                    path['traj_length'] = replay_buffer['traj_length'][batch_idx]
+
+                    path_prime['times'] = replay_buffer['times'][batch_idx] + 1
+                    path_prime['traj_length'] = replay_buffer['traj_length'][batch_idx]
+
+
+                Qs = self.predict_old(path_prime)
+                targets = (replay_buffer['rewards'][batch_idx] + gamma * Qs).astype('float32')
+        
+                if self.use_time:
+                    terminal_states = np.argwhere(replay_buffer['is_terminal'][batch_idx] == 1)
+                    targets[terminal_states] = replay_buffer['rewards'][terminal_states]
+        
+                featmat = np.array(self._features(path)).astype('float32')
+        
+                
+                if self.use_gpu:
+                    featmat_var = torch.from_numpy(featmat).cuda()
+                    targets_var = torch.from_numpy(targets).cuda()
+                else:
+                    featmat_var = torch.from_numpy(featmat)
+                    targets_var = torch.from_numpy(targets)
+
+                batch_x = featmat_var
+                batch_y = targets_var
+                
                 self.optimizer.zero_grad()
                 yhat = torch.squeeze(self.model(batch_x))
                 loss = self.loss_function(yhat, batch_y)
+                # if loss.item() > 100000:
+                #     print('fit_off_policy loss threshold', loss.item())
+                    # import pdb; pdb.set_trace()
+                errors.append(loss.item())
                 loss.backward()
                 self.optimizer.step()
                 
@@ -289,33 +318,11 @@ class MLPBaseline:
 
             # self.model = copy.deepcopy(self.model_old)
 
-            if return_errors:
-                Qs = self.predict(path_prime)
-                targets = (replay_buffer['rewards'] + gamma * Qs).astype('float32')
-
-                terminal_states = np.argwhere(replay_buffer['is_terminal'] == 1)
-                targets[terminal_states] = replay_buffer['rewards'][terminal_states]
-        
-                featmat = np.array(self._features(path)).astype('float32')
-
-                if self.use_gpu:
-                    featmat_var = Variable(torch.from_numpy(featmat).cuda(), requires_grad=False)
-                    targets_var = Variable(torch.from_numpy(targets).cuda(), requires_grad=False)
-                    predictions = self.model(featmat_var).cpu().data.numpy().ravel()
-                else:
-                    featmat_var = Variable(torch.from_numpy(featmat), requires_grad=False)
-                    targets_var = Variable(torch.from_numpy(targets), requires_grad=False)
-                    predictions = self.model(featmat_var).data.numpy().ravel()
-                    
-                errors_after = targets.ravel() - predictions
-            
         del featmat_var
         del targets_var
 
-        if return_errors:
-            error_before = np.sum(errors_before**2) / (np.sum(targets**2) + 1e-8)
-            error_after = np.sum(errors_after**2) / (np.sum(targets**2) + 1e-8)
-            return error_before, error_after
+        return errors
+
 
 
     def predict(self, path):
@@ -323,6 +330,7 @@ class MLPBaseline:
         featmat = self._features(path).astype('float32')
         if self.use_gpu:
             feat_var = torch.from_numpy(featmat).float().cuda()
+            # print(feat_var.shape)
             prediction = self.model(feat_var).cpu().data.numpy().ravel()
         else:
             feat_var = torch.from_numpy(featmat).float()

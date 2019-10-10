@@ -25,14 +25,22 @@ class MLPBaseline:
         self.inp = inp
 
         self.model = nn.Sequential()
+        # if self.use_time:
+        #     self.model.add_module('fc_0', nn.Linear(self.n+4, 64))
+        # else:
+        #     self.model.add_module('fc_0', nn.Linear(self.n, 64))
+        # self.model.add_module('relu_0', nn.ReLU())
+        # self.model.add_module('fc_1', nn.Linear(64, 64))
+        # self.model.add_module('relu_1', nn.ReLU())
+        # self.model.add_module('fc_2', nn.Linear(64, 1))
         if self.use_time:
-            self.model.add_module('fc_0', nn.Linear(self.n+4, 64))
+            self.model.add_module('fc_0', nn.Linear(self.n+4, 512))
         else:
-            self.model.add_module('fc_0', nn.Linear(self.n, 64))
+            self.model.add_module('fc_0', nn.Linear(self.n, 512))
         self.model.add_module('relu_0', nn.ReLU())
-        self.model.add_module('fc_1', nn.Linear(64, 64))
+        self.model.add_module('fc_1', nn.Linear(512, 512))
         self.model.add_module('relu_1', nn.ReLU())
-        self.model.add_module('fc_2', nn.Linear(64, 1))
+        self.model.add_module('fc_2', nn.Linear(512, 1))
 
         if self.use_gpu:
             self.model.cuda()

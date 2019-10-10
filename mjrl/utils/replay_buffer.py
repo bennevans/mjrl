@@ -10,7 +10,7 @@ class ReplayBuffer:
         self.replay_buffer = {}
         self.max_dataset_size = max_dataset_size
         self.drop_mode = drop_mode
-    
+
     def update(self, paths):
         """
         adds new paths to the replay buffer
@@ -27,6 +27,7 @@ class ReplayBuffer:
             rewards = path['rewards']
             times = path['times']
             traj_length = path['traj_length']
+            state_infos = path['env_infos']['state']
 
             l = observations.shape[0] - 1
             
@@ -45,6 +46,10 @@ class ReplayBuffer:
                 self.replay_buffer['t'] = 0
                 self.replay_buffer['iteration'] = 0
                 self.replay_buffer['iterations'] = np.zeros(l)
+
+                for key in state_infos:
+                    self.replay_buffer['state_' + key] = state_infos[key][:-1]
+                
             else:
                 self.replay_buffer['t'] += 1
                 self.replay_buffer['observations'] = np.concatenate([self.replay_buffer['observations'], observations[:-1]])
@@ -57,6 +62,11 @@ class ReplayBuffer:
                 self.replay_buffer['is_terminal'][-1] = 1
                 self.replay_buffer['traj_length'] = np.concatenate([self.replay_buffer['traj_length'], traj_length[:-1]])
                 self.replay_buffer['iterations'] = np.concatenate([self.replay_buffer['iterations'],  np.ones(l) * self.replay_buffer['iteration']])
+
+                for key in state_infos:
+                    self.replay_buffer['state_' + key] = np.concatenate([self.replay_buffer['state_' + key], state_infos[key][:-1]])
+
+
         self.replay_buffer['iteration'] += 1
 
         cur_size = len(self.replay_buffer['observations'])
@@ -71,6 +81,10 @@ class ReplayBuffer:
                 self.replay_buffer['is_terminal'] = self.replay_buffer['is_terminal'][-self.max_dataset_size:]
                 self.replay_buffer['traj_length'] = self.replay_buffer['traj_length'][-self.max_dataset_size:]
                 self.replay_buffer['iterations'] = self.replay_buffer['iterations'][-self.max_dataset_size:]
+                
+                for key in state_infos:
+                    self.replay_buffer['state_' + key] = state_infos[key][-self.max_dataset_size:]
+
             elif self.drop_mode == self.DROP_MODE_RANDOM:
                 keep_idx = np.random.permutation(np.arange(cur_size))[:self.max_dataset_size]
                 self.replay_buffer['observations'] = self.replay_buffer['observations'][keep_idx]
@@ -82,13 +96,17 @@ class ReplayBuffer:
                 self.replay_buffer['is_terminal'] = self.replay_buffer['is_terminal'][keep_idx]
                 self.replay_buffer['traj_length'] = self.replay_buffer['traj_length'][keep_idx]
                 self.replay_buffer['iterations'] = self.replay_buffer['iterations'][keep_idx]
+
+                for key in state_infos:
+                    self.replay_buffer['state_' + key] = state_infos[key][keep_idx]
+
             else:
                 raise Exception("invalid drop mode: {}".format(self.drop_mode))
 
     def __getitem__(self, key):
         return self.replay_buffer[key]
 
-    def sample(self, n, baseline, non_uniform=True):
+    def sample(self, n, baseline, non_uniform=True, return_state=False):
         """
         returns n samples from the replay buffer at uniform random in dict form
         """
@@ -117,7 +135,8 @@ class ReplayBuffer:
         # assert n < cur_size # TODO handle this case
 
 
-        return {
+
+        ret = {
             'observations': self['observations'][sample_idx],
             'observations_prime': self['observations_prime'][sample_idx],
             'actions': self['actions'][sample_idx],
@@ -127,7 +146,20 @@ class ReplayBuffer:
             'is_terminal': self['is_terminal'][sample_idx],
             'traj_length': self['traj_length'][sample_idx],
             'iterations': self['iterations'][sample_idx],
-        }, min(cur_size, n)
+        }
+
+        if return_state:
+            env_infos = []
+
+            for idx in sample_idx:
+                env_info = {}
+                for key in self.replay_buffer.keys():
+                    if key[:6] == 'state_':
+                        env_info[key[6:]] = self.replay_buffer[key][idx]
+                env_infos.append(env_info)
+            ret['env_infos'] = env_infos
+
+        return ret, min(cur_size, n)
 
 
 

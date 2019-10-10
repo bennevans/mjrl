@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 import copy
+import tqdm
 
 # samplers
 import mjrl.samplers.core as trajectory_sampler
@@ -22,7 +23,7 @@ from mjrl.utils.replay_buffer import ReplayBuffer
 
 
 class NPGOffPolicy(BatchREINFORCEOffPolicy):
-    def __init__(self, env, policy, baseline,
+    def __init__(self, env, policy, baseline, on_policy_baseline, fixed_dataset,
                     normalized_step_size=0.01,
                     const_learn_rate=None,
                     FIM_invert_args={'iters': 10, 'damping': 1e-4},
@@ -44,7 +45,8 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
                     num_update_actions=10,
                     num_policy_updates=1,
                     normalize_mode=BatchREINFORCEOffPolicy.NORMALIZE_STD,
-                    non_uniform=False):
+                    non_uniform=False,
+                    advantage_mode='mc', gamma=1.0, num_cpu=1):
         """
         All inputs are expected in mjrl's format unless specified
         :param normalized_step_size: Normalized step size (under the KL metric). Twice the desired KL distance
@@ -54,11 +56,12 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
         :param hvp_sample_frac: fraction of samples (>0 and <=1) to use for the Fisher metric (start with 1 and reduce if code too slow)
         :param seed: random seed
         """
-        super().__init__(env, policy, baseline, max_dataset_size=max_dataset_size,
+        super().__init__(env, policy, baseline, fixed_dataset, max_dataset_size=max_dataset_size,
             fit_off_policy=fit_off_policy, fit_on_policy=fit_on_policy,
             fit_iter_fn=fit_iter_fn, drop_mode=drop_mode, pg_update_using_rb=pg_update_using_rb,
             pg_update_using_advantage=pg_update_using_advantage, num_update_states=num_update_states,
-            num_update_actions=num_update_actions, num_policy_updates=num_policy_updates, normalize_mode=normalize_mode)
+            num_update_actions = num_update_actions, num_policy_updates = num_policy_updates,
+            normalize_mode=normalize_mode, advantage_mode=advantage_mode)
         self.env = env
         self.policy = policy
         self.baseline = baseline
@@ -73,6 +76,8 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
         self.epochs = epochs
         self.batch_size = batch_size
         self.non_uniform = non_uniform
+        self.gamma = gamma
+        self.num_cpu = num_cpu
         if save_logs: self.logger = DataLog()
 
     def HVP(self, observations, actions, vector, regu_coef=None):
@@ -140,34 +145,132 @@ class NPGOffPolicy(BatchREINFORCEOffPolicy):
 
         return alpha, n_step_size, t_gLL, t_FIM, new_params
 
+    def process_paths(self, paths, m):
 
-    def train(self, paths):
-        n = self.num_update_states # how many states to take from rb 
-        m = self.num_update_actions # how many actions per state
+        observations = np.tile(np.concatenate([path["observations"] for path in paths]), (m, 1))
+        actions_taken = np.tile(np.concatenate([path["actions"] for path in paths]), (m, 1))
+        actions_sampled = self.policy.get_action_batch(observations)
+        times = np.tile(np.concatenate([path["times"] for path in paths]), (m))
+        traj_length = np.tile(np.concatenate([path["traj_length"] for path in paths]), (m))
+        n = observations.shape[0] // m
 
-        # TODO repeat this process k times?
-
-        samples, n = self.replay_buffer.sample(n, self.baseline, self.non_uniform) # TODO is it bad to reupdate n?
-        observations = np.tile(samples['observations'], (m, 1))
-        times = np.tile(samples['times'], (m))
-        traj_length = np.tile(samples['traj_length'], (m))
-        actions = self.policy.get_action_batch(observations)
-
-        weights = np.zeros(n*m)
+        weights = np.zeros(n)
+        Qs_0 = self.baseline.predict(
+            {
+            'observations': observations[:n],
+            'actions': actions_taken[:n],
+            'times': times[:n],
+            'traj_length': traj_length[:n]
+            }
+        )
 
         for i in range(n):
-            
-            Qs = self.baseline.predict(
+            Qs_1 = self.baseline.predict(
                 {
                 'observations': observations[i::n],
-                'actions': actions[i::n],
+                'actions': actions_sampled[i::n],
                 'times': times[i::n],
                 'traj_length': traj_length[i::n]
                 }
             )
-            V = np.average(Qs)
-            weights[i::n] = Qs - V
+            V = np.average(Qs_1)
+            weights[i] = Qs_0[i] - V
         
+        return observations[:n], actions_taken[:n], weights
+        
+        
+
+    def train(self, paths, fit_on_policy):
+        n = self.num_update_states # how many states to take from rb 
+        m = self.num_update_actions # how many actions per state
+        
+        if fit_on_policy:
+            print('on_policy')
+            observations, actions, weights = self.process_paths(paths, m)
+        elif self.fit_off_policy:
+            print('off_policy')
+            
+
+            if self.advantage_mode == 'mc':
+                print('mc')
+                samples, n = self.fixed_dataset.sample(n, self.baseline, self.non_uniform, True) # TODO is it bad to reupdate n?
+                observations = np.tile(samples['observations'], (m, 1))
+                times = np.tile(samples['times'], (m))
+                traj_length = np.tile(samples['traj_length'], (m))
+
+                actions = np.zeros((n*m, self.env.action_dim))
+
+                states = samples['env_infos']
+
+                weights = np.zeros(n * m)
+
+                start_time = timer.time()
+
+                for i in tqdm.tqdm(range(n)):
+                    Qs = np.zeros(m)
+                    # paths = trajectory_sampler.rollout_from_state_many(self.env, self.policy, states[i], m, self.seed, self.num_cpu)
+                    for j in range(m):
+                        # TODO should this be a copy of env???
+                        # path = paths[j]
+                        horizon = samples['traj_length'][i] - samples['times'][i]
+                        path = trajectory_sampler.rollout_from_state(self.env, self.policy, states[i], horizon=horizon)
+                        Q = process_samples.discount_sum(path["rewards"], self.gamma)
+                        # import pdb; pdb.set_trace()
+
+                        actions[i + j*n] = path["actions"][0]
+                        Qs[j] = Q[-1]
+                    
+                    V = np.average(Qs)
+                    weights[i::n] = Qs - V
+                
+                end_time = timer.time()
+                print('MC time', end_time - start_time)
+            elif self.advantage_mode == 'q_phi':
+                print('q_phi')
+                samples, n = self.fixed_dataset.sample(n, self.baseline, self.non_uniform) # TODO is it bad to reupdate n?
+                observations = np.tile(samples['observations'], (m, 1))
+                times = np.tile(samples['times'], (m))
+                traj_length = np.tile(samples['traj_length'], (m))
+                actions = self.policy.get_action_batch(observations)
+
+                weights = np.zeros(n*m)
+
+                for i in range(n):
+                    
+                    Qs = self.baseline.predict(
+                        {
+                        'observations': observations[i::n],
+                        'actions': actions[i::n],
+                        'times': times[i::n],
+                        'traj_length': traj_length[i::n]
+                        }
+                    )
+                    V = np.average(Qs)
+                    weights[i::n] = Qs - V
+            else:
+                samples, n = self.replay_buffer.sample(n, self.baseline, self.non_uniform) # TODO is it bad to reupdate n?
+                observations = np.tile(samples['observations'], (m, 1))
+                times = np.tile(samples['times'], (m))
+                traj_length = np.tile(samples['traj_length'], (m))
+                actions = self.policy.get_action_batch(observations)
+
+                weights = np.zeros(n*m)
+
+                for i in range(n):
+                    
+                    Qs = self.baseline.predict(
+                        {
+                        'observations': observations[i::n],
+                        'actions': actions[i::n],
+                        'times': times[i::n],
+                        'traj_length': traj_length[i::n]
+                        }
+                    )
+                    V = np.average(Qs)
+                    weights[i::n] = Qs - V
+        else:
+            raise Exception('must fit on or off policy')
+
         if self.normalize_mode == BatchREINFORCEOffPolicy.NORMALIZE_STD:
             weights = (weights - np.mean(weights)) / (np.std(weights) + 1e-6)
         elif self.normalize_mode == BatchREINFORCEOffPolicy.NORMALIZE_FIXED_RANGE:

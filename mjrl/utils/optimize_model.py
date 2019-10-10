@@ -31,6 +31,6 @@ def fit_data(model, x, y, optimizer, loss_func, batch_size, epochs):
             loss = loss_func(yhat, batch_y)
             loss.backward()
             optimizer.step()
-            ep_loss += loss.data.numpy()
+            ep_loss += loss.data.cpu().numpy()
         epoch_losses.append(ep_loss * 1.0/num_steps)
     return epoch_losses

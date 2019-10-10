@@ -104,7 +104,7 @@ class BatchREINFORCEOffPolicy:
     NORMALIZE_FIXED_RANGE = 'range_normalize'
     NORMALIZE_MIN_MAX = 'range_min_max'
     NORMALIZE_OFF = 'no_normalize'
-    def __init__(self, env, policy, baseline,
+    def __init__(self, env, policy, baseline, fixed_dataset,
                 max_dataset_size=-1,
                 learn_rate=0.01,
                 seed=None,
@@ -120,11 +120,12 @@ class BatchREINFORCEOffPolicy:
                 num_update_states=10,
                 num_update_actions=10,
                 num_policy_updates=1,
-                normalize_mode=NORMALIZE_STD):
-
+                normalize_mode=NORMALIZE_STD, advantage_mode='mc'):
+        print('advantage mode', advantage_mode)
         self.env = env
         self.policy = policy
         self.baseline = baseline
+        self.fixed_dataset = fixed_dataset
         self.alpha = learn_rate
         self.seed = seed
         self.save_logs = save_logs
@@ -142,6 +143,7 @@ class BatchREINFORCEOffPolicy:
         self.num_update_actions = num_update_actions
         self.num_policy_updates = num_policy_updates
         self.normalize_mode = normalize_mode
+        self.advantage_mode = advantage_mode
 
         if save_logs: self.logger = DataLog()
 
@@ -173,6 +175,7 @@ class BatchREINFORCEOffPolicy:
                     gamma=0.995,
                     gae_lambda=0.98,
                     num_cpu='max',
+                    pool=None,
                     i=None):
         
         # Clean up input arguments
@@ -186,11 +189,11 @@ class BatchREINFORCEOffPolicy:
         
         if sample_mode == 'trajectories':
             input_dict = dict(num_traj=N, env=env, policy=self.policy, horizon=horizon,
-                              base_seed=self.seed, num_cpu=num_cpu)
+                              base_seed=self.seed, num_cpu=num_cpu, pool=pool)
             paths = trajectory_sampler.sample_paths(**input_dict)
         elif sample_mode == 'samples':
             input_dict = dict(num_samples=N, env=env, policy=self.policy, horizon=horizon,
-                              base_seed=self.seed, num_cpu=num_cpu)
+                              base_seed=self.seed, num_cpu=num_cpu, pool=pool)
             paths = trajectory_sampler.sample_data_batch(**input_dict)
         
         
@@ -222,6 +225,8 @@ class BatchREINFORCEOffPolicy:
             self.logger.log_kv('MSE_1_before', mse(pred_1, mc_1))
             self.logger.log_kv('MSE_end_before', mse(pred_start_end, mc_start_end))
 
+        Qerrs = []
+
         for k in range(self.num_policy_updates):
             # update Q
             if self.fit_iter_fn is not None:
@@ -231,10 +236,15 @@ class BatchREINFORCEOffPolicy:
 
             start_baseline = timer.time()
             # import pdb;pdb.set_trace()
-            error_before, error_after = self.baseline.fit_off_policy_many(self.replay_buffer, self.policy, gamma)
+            if self.advantage_mode == 'q_phi':
+                print('learn q from fixed')
+                errors = self.baseline.fit_off_policy_many(self.fixed_dataset, self.policy, gamma)
+            else:
+                errors = self.baseline.fit_off_policy_many(self.replay_buffer, self.policy, gamma)
+            Qerrs += errors
             end_baseline = timer.time()
             # update policy
-            eval_statistics = self.train(paths)
+            eval_statistics = self.train(paths, (self.fit_on_policy and k == 0))
             end_train = timer.time()
 
             baseline_time += (end_baseline - start_baseline)
@@ -250,14 +260,24 @@ class BatchREINFORCEOffPolicy:
             self.logger.log_kv('MSE_1_after', mse(pred_1, mc_1))
             self.logger.log_kv('MSE_end_after', mse(pred_start_end, mc_start_end))
 
+            if mse(pred_1, mc_1) > 1e10:
+                print('big mse')
+                import matplotlib
+                import matplotlib.pyplot as plt
+                matplotlib.use('tkagg') 
+                print('hi')
+                plt.plot(Qerrs)
+                save_file = 'errors.png'
+                print('saving errors to {}'.format(save_file))
+                plt.savefig(save_file)
+                import pdb; pdb.set_trace()
+
             self.logger.log_kv('time_VF', timer.time()-ts)
             self.logger.log_kv('time_baseline', baseline_time)
             self.logger.log_kv('time_pg', pg_time)
-            self.logger.log_kv('VF_error_before', error_before)
-            self.logger.log_kv('VF_error_after', error_after)
             self.logger.log_kv('dataset_size', len(self.replay_buffer['observations']))
             self.logger.log_kv('t', self.replay_buffer['t'])
-
+        
         eval_statistics.append(N)
 
         if self.save_logs:

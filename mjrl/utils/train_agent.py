@@ -10,6 +10,7 @@ import pickle
 import time as timer
 import os
 import copy
+import multiprocessing as mp
 
 def train_agent(job_name, agent,
                 seed = 0,
@@ -40,9 +41,13 @@ def train_agent(job_name, agent,
 
     total_trajectories = 0
 
+    pool = mp.Pool(processes=num_cpu, maxtasksperchild=1)
+    
     for i in range(niter):
         print("......................................................................................")
         print("ITERATION : %i " % i)
+
+        start_iter = timer.time()
 
         if train_curve[i-1] > best_perf:
             best_policy = copy.deepcopy(agent.policy)
@@ -50,9 +55,9 @@ def train_agent(job_name, agent,
 
         N = num_traj if sample_mode == 'trajectories' else num_samples
         if include_i:
-            args = dict(N=N, sample_mode=sample_mode, gamma=gamma, gae_lambda=gae_lambda, num_cpu=num_cpu, i=i)
+            args = dict(N=N, sample_mode=sample_mode, gamma=gamma, gae_lambda=gae_lambda, num_cpu=num_cpu, pool=pool, i=i)
         else:
-            args = dict(N=N, sample_mode=sample_mode, gamma=gamma, gae_lambda=gae_lambda, num_cpu=num_cpu)
+            args = dict(N=N, sample_mode=sample_mode, gamma=gamma, gae_lambda=gae_lambda, num_cpu=num_cpu, pool=pool)
 
         stats = agent.train_step(**args)
         train_curve[i] = stats[0]
@@ -66,7 +71,7 @@ def train_agent(job_name, agent,
         if evaluation_rollouts is not None and evaluation_rollouts > 0:
             print("Performing evaluation rollouts ........")
             eval_paths = sample_paths(num_traj=evaluation_rollouts, policy=agent.policy, num_cpu=num_cpu,
-                                      env=e.env_id, eval_mode=True, base_seed=seed)
+                                      env=e.env_id, eval_mode=True, base_seed=seed, pool=pool)
             mean_pol_perf = np.mean([np.sum(path['rewards']) for path in eval_paths])
             if agent.save_logs:
                 agent.logger.log_kv('eval_score', mean_pol_perf)
@@ -78,10 +83,15 @@ def train_agent(job_name, agent,
                 make_train_plots(log=agent.logger.log, keys=plot_keys, save_loc='logs/')
             policy_file = 'policy_%i.pickle' % i
             baseline_file = 'baseline_%i.pickle' % i
+            rb_file = 'replay_buffer_{}.pickle'.format(i) 
             pickle.dump(agent.policy, open('iterations/' + policy_file, 'wb'))
             pickle.dump(agent.baseline, open('iterations/' + baseline_file, 'wb'))
             pickle.dump(best_policy, open('iterations/best_policy.pickle', 'wb'))
-
+            try:
+                pickle.dump(agent.replay_buffer, open('iterations/' + rb_file, 'wb'))
+            except:
+                print('warning: could not save replay buffer')
+                
         # print results to console
         if i == 0:
             result_file = open('results.txt', 'w')
@@ -97,6 +107,10 @@ def train_agent(job_name, agent,
             print_data = sorted(filter(lambda v: np.asarray(v[1]).size == 1,
                                        agent.logger.get_current_log().items()))
             print(tabulate(print_data))
+
+
+        end_iter = timer.time()
+        print('train iteration time', end_iter - start_iter)
 
     # final save
     pickle.dump(best_policy, open('iterations/best_policy.pickle', 'wb'))

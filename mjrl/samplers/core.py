@@ -7,7 +7,6 @@ import multiprocessing as mp
 import time as timer
 logging.disable(logging.CRITICAL)
 
-
 # Single core rollout to sample trajectories
 # =======================================================
 def do_rollout(
@@ -46,7 +45,7 @@ def do_rollout(
         np.random.seed()
     horizon = min(horizon, env.horizon)
     paths = []
-
+    
     for ep in range(num_traj):
         # seeding
         if base_seed is not None:
@@ -61,10 +60,10 @@ def do_rollout(
         env_infos = []
         times = []
 
-        o = env.reset()
+        o = env.reset() 
         done = False
         t = 0
-
+        
         while t < horizon and done != True:
             a, agent_info = policy.get_action(o)
             if eval_mode:
@@ -78,7 +77,6 @@ def do_rollout(
             o = next_o
             times.append(t)
             t += 1
-        
         is_terminal = np.zeros(len(times))
         is_terminal[-1] = 1
 
@@ -98,11 +96,101 @@ def do_rollout(
     del(env)
     return paths
 
+def rollout_from_state(env,
+        policy,
+        state,
+        eval_mode = False,
+        horizon = 1e6,
+        base_seed=None):
+
+    env = GymEnv(env.env_id)
+
+    if base_seed is not None:
+        env.set_seed(base_seed)
+        np.random.seed(base_seed)
+    else:
+        np.random.seed()
+    horizon = min(horizon, env.horizon)
+
+    # seeding
+    if base_seed is not None:
+        env.set_seed(base_seed)
+        np.random.seed(base_seed)
+
+    observations=[]
+    actions=[]
+    rewards=[]
+    agent_infos = []
+    env_infos = []
+    times = []
+
+    env.reset()
+    env.env.env.set_env_state(state)
+    o = env.env.env.get_obs()
+
+    done = False
+    t = 0
+    
+    while t < horizon and done != True:
+        a, agent_info = policy.get_action(o)
+        if eval_mode:
+            a = agent_info['evaluation']
+        next_o, r, done, env_info = env.step(a)
+        observations.append(o)
+        actions.append(a)
+        rewards.append(r)
+        agent_infos.append(agent_info)
+        env_infos.append(env_info)
+        o = next_o
+        times.append(t)
+        t += 1
+    is_terminal = np.zeros(len(times))
+    is_terminal[-1] = 1
+
+    path = dict(
+        observations=np.array(observations),
+        actions=np.array(actions),
+        rewards=np.array(rewards),
+        agent_infos=tensor_utils.stack_tensor_dict_list(agent_infos),
+        env_infos=tensor_utils.stack_tensor_dict_list(env_infos),
+        terminated=done,
+        times=np.array(times),
+        traj_length=np.ones_like(times) * times[-1],
+        is_terminal=is_terminal
+    )
+
+    del(env)
+    return path
+
+def rollout_from_state_many(env, policy, state, m, base_seed, num_cpu,
+        max_process_time=300,
+        max_timeouts=4):
+    input_dict_list = []
+
+    num_cpu = min(m, num_cpu)
+
+    pool = mp.Pool(processes=num_cpu, maxtasksperchild=1)
+
+    for i in range(m):
+        input_dict = dict(env=env,
+        policy=policy,
+        state=state,
+        eval_mode = False,
+        horizon = 1e6,
+        base_seed=base_seed + i)
+
+        input_dict_list.append(input_dict)
+
+    results = _try_multiprocess(rollout_from_state, pool, input_dict_list,
+                                num_cpu, max_process_time, max_timeouts, kill_at_end=True)
+
+    return results
 
 def sample_paths(
         num_traj,
         env,
         policy,
+        pool,
         eval_mode = False,
         horizon = 1e6,
         base_seed = None,
@@ -134,7 +222,7 @@ def sample_paths(
         start_time = timer.time()
         print("####### Gathering Samples #######")
 
-    results = _try_multiprocess(do_rollout, input_dict_list,
+    results = _try_multiprocess(do_rollout, pool, input_dict_list,
                                 num_cpu, max_process_time, max_timeouts)
     paths = []
     # result is a paths type and results is list of paths
@@ -185,13 +273,11 @@ def sample_data_batch(
     return paths
 
 
-def _try_multiprocess(func, input_dict_list, num_cpu, max_process_time, max_timeouts):
-    
+def _try_multiprocess(func, pool, input_dict_list, num_cpu, max_process_time, max_timeouts, kill_at_end=False):
     # Base case
     if max_timeouts == 0:
         return None
 
-    pool = mp.Pool(processes=num_cpu, maxtasksperchild=1)
     parallel_runs = [pool.apply_async(func, kwds=input_dict) for input_dict in input_dict_list]
     try:
         results = [p.get(timeout=max_process_time) for p in parallel_runs]
@@ -203,9 +289,9 @@ def _try_multiprocess(func, input_dict_list, num_cpu, max_process_time, max_time
         pool.terminate()
         pool.join()
         raise e
-        return _try_multiprocess(func, input_dict_list, num_cpu, max_process_time, max_timeouts-1)
-
-    pool.close()
-    pool.terminate()
-    pool.join()  
+        return _try_multiprocess(func, pool, input_dict_list, num_cpu, max_process_time, max_timeouts-1)
+    if kill_at_end:
+        pool.close()
+        pool.terminate()
+        pool.join()
     return results
